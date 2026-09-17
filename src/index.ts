@@ -1,7 +1,7 @@
 /**
  * dsh-mem —— 基于 vault 的 DSH 记忆空间插件（宿主端入口）。
  *
- * 设计文档：`docs/DESIGN-memory-plugin.md`（随仓库发布）。
+ * 设计文档：DESIGN-memory-plugin.md（设计资料，**不随仓库分发**）。
  *
  * 已完成：
  *  P0/P1    vault 目录约定 + 派生索引 + 数据面路由 + 记忆空间 UI

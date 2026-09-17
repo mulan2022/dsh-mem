@@ -29,7 +29,7 @@ export type WorkspaceKind = 'chat' | 'project';
  * 「聊天模式」agent preset 的 id（= `.agent-presets/` 下的目录名，**不是显示名**）。
  *
  * 用户选了这个 preset 就是**明确声明**"这是聊天" —— 比从 cwd 猜准得多。
- * 见 DESIGN-memory-plugin.md §4.2.7。
+ * preset 是用户声明的意图，压过登记表与仓库标记（见 README「聊天 / 项目两套记忆空间」）。
  */
 export const CHAT_PRESET_ID = 'chat';
 export type DefaultPolicy = 'ask' | 'chat' | 'project';
