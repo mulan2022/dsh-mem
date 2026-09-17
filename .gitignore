@@ -1,0 +1,11 @@
+# 依赖
+node_modules/
+
+# 构建产物 —— 由 `npm run build`（esbuild）生成。
+# package.json 的 main 指向 lib/index.js，所以 clone 之后必须先构建。
+lib/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.log

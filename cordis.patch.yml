@@ -1,0 +1,12 @@
+# dsh-mem bundle patch: inserts this plugin into a profile's layer stack.
+#
+# 总开关默认值遵循设计文档 §9「默认关闭」——但 P1 阶段为了能在 DSH 里
+# 看到记忆空间，装配基线先给 true。v1.0 发布时改回 false。
+#
+# 注意：YAML 只支持 `#` 注释。不要在这里写 /* */ 或 //，会解析失败。
+
+- insert:
+    - id: dsh-mem
+      name: 'dsh-mem'
+      config:
+        enabled: true

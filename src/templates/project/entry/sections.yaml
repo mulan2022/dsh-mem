@@ -1,0 +1,48 @@
+# 项目记忆的 section 定义
+#
+# 每个项目（`projects/<项目名>/`）都用这一套。
+#
+# **注意 `resident` 在这一层不起作用**：项目记忆**整体不参与主动注入**
+# （用户拍板：平时只注入「常驻记忆 + 全局共用」，项目里的具体内容由 AI 按需调工具取）。
+# 字段保留是为了模板统一 —— 真要改注入行为，改的是注入规则，不是这里。
+
+space: project
+layer: entry
+description: 属于某一个具体项目的记忆。
+
+sections:
+  - name: 项目目标
+    file: sections/goal.md
+    resident: false
+    order: 10
+    hint: 这个项目要解决什么、成功标准、明确不做什么
+
+  - name: 待办
+    file: sections/todo.md
+    resident: false
+    order: 20
+    hint: 进行中与下一步；已完成的移出
+
+  - name: 架构与结构
+    file: sections/architecture.md
+    resident: false
+    order: 30
+    hint: 模块划分、关键接口、数据流
+
+  - name: 技术决策
+    file: sections/decisions.md
+    resident: false
+    order: 40
+    hint: 做了什么选择、为什么、放弃了什么
+
+  - name: 踩坑与教训
+    file: sections/pitfalls.md
+    resident: false
+    order: 50
+    hint: 踩过的坑、真机事故、以及最终怎么解决的
+
+  - name: 项目时间线
+    file: timeline.md
+    resident: false
+    order: 60
+    hint: 改了什么、什么时候改的；摘要一行一条，详情按需取

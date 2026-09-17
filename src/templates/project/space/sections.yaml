@@ -1,0 +1,6 @@
+# 项目记忆这一层本身不放常驻 section —— 内容都在 projects/<项目名>/ 里。
+# 每个项目有自己的 sections.yaml（项目目标 / 架构 / 决策与教训 / 待办 / 时间线）。
+
+space: project
+description: 每个项目各自的记忆；这一层只是容器，不参与注入。
+sections: []

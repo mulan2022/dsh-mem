@@ -1,0 +1,45 @@
+# 聊天空间的 section 定义
+#
+# 这里定义"聊天记忆都整理哪些东西"。用户可以直接改这个文件 —— 换模板不算改代码。
+# resident: true 的 section 会**常驻注入**每一次会话（体积要小）；
+# resident: false 的只在检索命中时被读到。
+
+space: chat
+description: 关于"你"的记忆：价值观、态度、沟通风格、品味与关系。
+
+sections:
+  - name: 价值观与人生观
+    file: sections/values.md
+    resident: true
+    order: 10
+    hint: 对世界的根本判断、在意什么、拒绝什么、人生目标与意义感
+
+  - name: 沟通风格
+    file: sections/communication.md
+    resident: true
+    order: 20
+    hint: 说话方式、希望被如何对待、反感什么表达、称谓习惯
+
+  - name: 态度与倾向
+    file: sections/attitude.md
+    resident: false
+    order: 30
+    hint: 对具体领域的态度、情绪倾向、偏好与回避
+
+  - name: 品味偏好
+    file: sections/taste.md
+    resident: false
+    order: 40
+    hint: 审美、口味、娱乐偏好、消费取向
+
+  - name: 关系
+    file: sections/relations.md
+    resident: false
+    order: 50
+    hint: 重要的人、关系状态、相处方式
+
+  - name: 本月状态
+    file: sections/this-month.md
+    resident: false
+    order: 60
+    hint: 近期生活状态、在忙什么、情绪起伏

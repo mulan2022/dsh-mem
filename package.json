@@ -1,0 +1,61 @@
+{
+  "name": "dsh-mem",
+  "version": "0.1.0",
+  "description": "Vault-based memory space for DeepSeek Harness: markdown vault as the source of truth, separate chat/project spaces with hard project partitions, lazy-loaded project timeline.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory",
+    "vault",
+    "markdown"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "prompts",
+    "cordis.patch.yml"
+  ],
+  "license": "MIT",
+  "author": "mulan2022",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mulan2022/dsh-mem.git"
+  },
+  "homepage": "https://github.com/mulan2022/dsh-mem#readme",
+  "bugs": {
+    "url": "https://github.com/mulan2022/dsh-mem/issues"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "link": "powershell -ExecutionPolicy Bypass -File scripts/link-dsh.ps1",
+    "postinstall": "powershell -ExecutionPolicy Bypass -File scripts/link-dsh.ps1",
+    "build": "npm run link && node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "check": "node scripts/smoke.mjs && node scripts/smoke-client.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.3.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,44 @@
+# 全局层的 section 定义
+#
+# 这一层的内容**所有会话都会注入** —— 聊天会话和项目会话都读它。
+# 它是"关于你、而不属于任何一个项目"的那部分：身份、准则、能力画像、偏好。
+
+space: shared
+description: 所有空间共享 —— 你是谁、AI 是谁、通用准则、能力画像与项目偏好。
+
+sections:
+  - name: 用户身份
+    file: sections/user.md
+    resident: true
+    order: 10
+    hint: 你是谁、称呼、基本背景、通用偏好
+
+  - name: AI 设定
+    file: sections/soul.md
+    resident: true
+    order: 20
+    hint: AI 自身的定位与行为设定
+
+  - name: 全局准则
+    file: sections/rules.md
+    resident: true
+    order: 30
+    hint: 跨项目、跨话题都适用的设计原则与行为准则
+
+  - name: 能力画像
+    file: sections/ability.md
+    resident: true
+    order: 40
+    hint: 代码水平、数学水平、熟悉/陌生的领域、学习速度、擅长与短板
+
+  - name: 项目偏好
+    file: sections/preferences.md
+    resident: true
+    order: 50
+    hint: 工作方式偏好、评审习惯、对工具链的取舍、被纠正时的期望
+
+  - name: 技术栈偏好
+    file: sections/stack.md
+    resident: false
+    order: 60
+    hint: 喜欢的语言/框架/工具，明确排斥的技术
