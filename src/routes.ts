@@ -28,11 +28,46 @@ interface RouteRegistrar {
 interface NodeReq {
   method?: string;
   url?: string;
+  on?(event: string, listener: (chunk?: unknown) => void): void;
 }
 interface NodeRes {
   statusCode: number;
   setHeader(name: string, value: string): void;
   end(body?: string): void;
+}
+
+/** POST 体的字符上限 —— 这里只会收到 `{action, sessionId}`，超过就是异常输入。 */
+const BODY_LIMIT = 8 * 1024;
+
+/**
+ * 读 POST 体并解析成对象。
+ *
+ * 解析失败一律给空对象（而不是抛）：这条链路的输入来自我们自己的前端，
+ * **宁可当作"参数没给"走 400，也不要让一个畸形请求把 handler 打挂**。
+ */
+function readJsonBody(req: unknown): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const r = req as NodeReq;
+    if (typeof r.on !== 'function') return resolve({});
+    let text = '';
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        const parsed: unknown = JSON.parse(text === '' ? '{}' : text);
+        resolve(parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {});
+      } catch {
+        resolve({});
+      }
+    };
+    r.on('data', (chunk) => {
+      text += String(chunk ?? '');
+      if (text.length > BODY_LIMIT) finish();
+    });
+    r.on('end', finish);
+    r.on('error', finish);
+  });
 }
 
 function writeJson(res: unknown, status: number, body: unknown): void {
@@ -75,6 +110,26 @@ export function resolveSpaceDir(api: VaultApi, space: string): string | null {
 }
 
 /**
+ * dream 的控制面（会话右键菜单用）。
+ *
+ * 这是本插件**唯一一组写路由** —— 与「常驻记忆只读」并不矛盾：常驻记忆的正文
+ * 只有 `mem_remember` / `mem_forget` 能改，而这里改的是**整理调度**（跳过名单 / 现在跑一次），
+ * 不是记忆内容。清单本身仍然落在 `state.json`，AI 侧走 `mem_dream` 工具，
+ * 两条入口共用 `dream.ts` 同一套读写。
+ */
+export interface DreamRoutesApi {
+  /** 当前跳过名单 + 待整理名单 + 是否正在整理。 */
+  state(): { skipped: string[]; pending: string[]; running: boolean };
+  /** 返回更新后的跳过名单。 */
+  setSkip(sessionId: string, skip: boolean): string[];
+  /**
+   * 起一次整理。**立刻返回，不等它跑完** —— 整理是几十秒到几分钟的多轮子 agent 协作，
+   * 让 HTTP 挂那么久只会超时。跑没跑完看 `state().running`。
+   */
+  start(sessionIds: string[]): { ok: boolean; started: boolean; text?: string; error?: string };
+}
+
+/**
  * 路由之外的只读视图提供者。
  *
  * 让 routes.ts 不必知道"工作区怎么判定"—— 那是 workspaces.ts 的事。
@@ -83,6 +138,8 @@ export function resolveSpaceDir(api: VaultApi, space: string): string | null {
 export interface VaultRoutesExtras {
   /** 工作区登记视图（只读）。 */
   workspaceView?: () => unknown;
+  /** dream 控制面；未配置时相关路由返回明确原因，而不是 404。 */
+  dream?: DreamRoutesApi;
 }
 
 /**
@@ -165,6 +222,68 @@ export function registerVaultRoutes(
           return writeJson(res, 200, { ok: false, error: '工作区视图未配置' });
         }
         writeJson(res, 200, { ok: true, ...(extras.workspaceView() as Record<string, unknown>) });
+      },
+    },
+    {
+      // dream 控制面：会话右键菜单的「现在整理」与「跳过整理」。
+      //
+      // GET  → `{ skipped, pending, running }`（菜单打开时用来定标题与图标）
+      // POST → `{ action: 'skip' | 'unskip' | 'run', sessionId, sessionIds? }`
+      //
+      // 没有任何"直接写记忆"的能力 —— 这里只动整理调度。
+      path: `${PREFIX}/dream`,
+      handler: (req: unknown, res: unknown) => {
+        const dream = extras.dream;
+        if (dream === undefined) {
+          return writeJson(res, 200, { ok: false, error: 'dream 控制面未配置' });
+        }
+        const method = ((req as NodeReq).method ?? 'GET').toUpperCase();
+        if (method === 'GET') {
+          return writeJson(res, 200, { ok: true, ...dream.state() });
+        }
+        if (method !== 'POST') {
+          return writeJson(res, 405, { ok: false, error: `method not allowed: ${method}` });
+        }
+
+        void (async () => {
+          const body = await readJsonBody(req);
+          const action = typeof body.action === 'string' ? body.action : '';
+          const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+
+          if (action === 'skip' || action === 'unskip') {
+            if (sessionId === '') {
+              return writeJson(res, 400, { ok: false, error: 'skip/unskip 需要 sessionId' });
+            }
+            try {
+              const skipped = dream.setSkip(sessionId, action === 'skip');
+              return writeJson(res, 200, { ok: true, skipped });
+            } catch (e) {
+              return writeJson(res, 500, {
+                ok: false,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+
+          if (action === 'run') {
+            const asked = Array.isArray(body.sessionIds)
+              ? body.sessionIds.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+              : [];
+            const target = asked.length > 0 ? asked : sessionId !== '' ? [sessionId] : [];
+            try {
+              const out = dream.start(target);
+              return writeJson(res, out.ok ? 200 : 409, out);
+            } catch (e) {
+              return writeJson(res, 500, {
+                ok: false,
+                started: false,
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          }
+
+          return writeJson(res, 400, { ok: false, error: `unknown action: ${action}` });
+        })();
       },
     },
   ];

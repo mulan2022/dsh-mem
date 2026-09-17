@@ -122,5 +122,160 @@ console.log('\n=== 5. 边界 ===');
 check('空字符串不抛错', (() => { try { renderFileBody('a.md', ''); return true; } catch { return false; } })());
 check('未闭合代码块不抛错', (() => { try { renderFileBody('a.md', '```js\nlet x=1'); return true; } catch { return false; } })());
 
+// ---- 6. 会话右键菜单：菜单项计划 ----
+// 这里只测**能脱离 DOM 的部分**。真正的 DOM 注入（克隆 menuitem、MutationObserver）
+// 依赖外壳的 React 渲染，只能在真机点一次验证；纯逻辑部分全部在这里锁住。
+console.log('\n=== 6. 会话右键菜单的菜单项 ===');
+const { dreamMenuPlan, readSessionIdFromRow, sessionIdFromTarget } = mod.exports;
+
+const planOff = dreamMenuPlan(false);
+check('未跳过 → 两项', planOff.length === 2, String(planOff.length));
+check('第一项是「现在整理」', planOff[0].key === 'run' && planOff[0].label === '现在整理记忆', planOff[0].label);
+check('第二项是「跳过整理」', planOff[1].key === 'toggle' && planOff[1].label === '跳过整理记忆', planOff[1].label);
+check('两项各自带 svg 图标', planOff.every((p) => p.icon.startsWith('<svg')));
+
+const planOn = dreamMenuPlan(true);
+check('已跳过 → 第二项变「取消跳过」', planOn[1].label === '取消跳过整理记忆', planOn[1].label);
+check('已跳过时「现在整理」仍在（跳过名单只挡自动整理）', planOn[0].label === '现在整理记忆');
+check('两种状态的图标不同', planOn[1].icon !== planOff[1].icon);
+
+// ---- 7. 会话 id 提取（顺 React fiber 往上找字符串 key）----
+console.log('\n=== 7. 会话 id 提取 ===');
+const fiberRow = { __reactFiber$abc123: { key: null, return: { key: 'session-1c4b2f55-aaaa' } } };
+check('顺 fiber 往上取到 id', readSessionIdFromRow(fiberRow) === 'session-1c4b2f55-aaaa', String(readSessionIdFromRow(fiberRow)));
+check('第一层就有 key 也能取到', readSessionIdFromRow({ __reactFiber$x: { key: 'session-zzz' } }) === 'session-zzz');
+check('fiber 里没有字符串 key → null', readSessionIdFromRow({ __reactFiber$x: { key: 1, return: { key: 2 } } }) === null);
+check('没有 fiber → null', readSessionIdFromRow({}) === null);
+check('非对象不抛错', readSessionIdFromRow(null) === null && readSessionIdFromRow(undefined) === null);
+check('fiber 链有环也不死循环', readSessionIdFromRow((() => { const f = { key: null }; f.return = f; return { __reactFiber$c: f }; })()) === null);
+
+const fakeRow = { __reactFiber$z: { key: 'session-deadbeef-1111' } };
+const onRowActions = {
+  closest(sel) {
+    if (sel.includes('_rowActions')) return {};
+    if (sel.includes('_sessionRow')) return fakeRow;
+    return null;
+  },
+};
+check('点会话行「…」→ 取到 id', sessionIdFromTarget(onRowActions) === 'session-deadbeef-1111', String(sessionIdFromTarget(onRowActions)));
+check('点的地方不在「…」按钮里 → null', sessionIdFromTarget({ closest: () => null }) === null);
+check('目标非元素不抛错', sessionIdFromTarget(null) === null && sessionIdFromTarget(42) === null);
+
+// ---- 8. 菜单注入：幂等（防 MutationObserver 自激）----
+// ★ 这一节锁的是一个真实踩过的坑：往菜单里加节点本身会触发 observer，
+//   若"先删旧项再插新项"，就会 删→触发→插→触发 无限转。所以必须幂等。
+console.log('\n=== 8. 菜单注入：幂等与点击行为 ===');
+const { injectDreamItems } = mod.exports;
+const ITEM_ATTR = 'data-dshmem-dream-item';
+const SID_ATTR = 'data-dshmem-session-id';
+
+/** 迷你 DOM 桩：只实现 injectDreamItems 用到的那几个方法。 */
+function makeEl(tag) {
+  const attrs = {};
+  const kids = [];
+  const el = {
+    tag,
+    children: kids,
+    textContent: '',
+    outerHTML: '',
+    listeners: {},
+    parent: null,
+    setAttribute(k, v) { attrs[k] = String(v); },
+    getAttribute(k) { return k in attrs ? attrs[k] : null; },
+    removeAttribute(k) { delete attrs[k]; },
+    remove() { const i = el.parent?.children.indexOf(el) ?? -1; if (i >= 0) el.parent.children.splice(i, 1); },
+    addEventListener(t, fn) { (el.listeners[t] ??= []).push(fn); },
+    appendChild(n) { n.parent = el; kids.push(n); return n; },
+    matches(sel) { return matchesSel(el, sel); },
+    querySelector(sel) { return queryAll(el, sel)[0] ?? null; },
+    querySelectorAll(sel) { return queryAll(el, sel); },
+    cloneNode() {
+      const c = makeEl(tag);
+      c.textContent = el.textContent;
+      c.outerHTML = el.outerHTML;
+      for (const k of Object.keys(attrs)) c.setAttribute(k, attrs[k]);
+      for (const kid of kids) c.appendChild(kid.cloneNode(true));
+      return c;
+    },
+  };
+  return el;
+}
+function matchesSel(el, sel) {
+  if (sel.startsWith('[') && sel.endsWith(']')) {
+    const body = sel.slice(1, -1);
+    const eq = body.indexOf('=');
+    if (eq < 0) return el.getAttribute(body) !== null;
+    const k = body.slice(0, eq);
+    const v = body.slice(eq + 1).replace(/^"|"$/g, '');
+    return el.getAttribute(k) === v;
+  }
+  return el.tag === sel;
+}
+function queryAll(root, sel) {
+  const out = [];
+  const walk = (n) => {
+    for (const c of n.children) {
+      if (matchesSel(c, sel)) out.push(c);
+      walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+/** 一个菜单：里面有一个模板 menuitem（文字 span + svg）。 */
+function buildMenu() {
+  const menu = makeEl('div');
+  const tpl = makeEl('div');
+  tpl.setAttribute('role', 'menuitem');
+  const span = makeEl('span');
+  span.textContent = '重命名';
+  const svg = makeEl('svg');
+  svg.outerHTML = '<svg id="tpl-icon"></svg>';
+  tpl.appendChild(span);
+  tpl.appendChild(svg);
+  menu.appendChild(tpl);
+  return { menu, span };
+}
+
+const calls = [];
+const host = {
+  isSkipped: () => false,
+  toggle: (sid, next) => calls.push(['toggle', sid, next]),
+  run: (sid) => calls.push(['run', sid]),
+};
+
+const b1 = buildMenu();
+injectDreamItems(b1.menu, 'session-1', host);
+const first = b1.menu.querySelectorAll(`[${ITEM_ATTR}]`).length;
+injectDreamItems(b1.menu, 'session-1', host);
+const second = b1.menu.querySelectorAll(`[${ITEM_ATTR}]`).length;
+check('首次注入 2 项', first === 2, String(first));
+check('★ 重复注入不翻倍（否则 observer 自激死循环）', second === 2, String(second));
+
+const b2 = buildMenu();
+injectDreamItems(b2.menu, 'session-9', host);
+const items = b2.menu.querySelectorAll(`[${ITEM_ATTR}]`);
+check('第一项标记为 run', items[0]?.getAttribute(ITEM_ATTR) === 'run');
+check('第二项标记为 toggle', items[1]?.getAttribute(ITEM_ATTR) === 'toggle');
+check('两项都带会话 id', items.every((i) => i.getAttribute(SID_ATTR) === 'session-9'));
+check('克隆的模板项不再是模板（id 已清）', !JSON.stringify(items.map((i) => i.outerHTML)).includes('tpl-icon'));
+
+items[0].listeners.click[0]({ stopPropagation() {}, preventDefault() {} });
+check('点「现在整理」→ 调 run 且带会话 id', calls[0]?.[0] === 'run' && calls[0]?.[1] === 'session-9', JSON.stringify(calls));
+
+items[1].listeners.click[0]({ stopPropagation() {}, preventDefault() {} });
+check('点「跳过整理」→ 调 toggle(true)', calls[1]?.[0] === 'toggle' && calls[1]?.[2] === true, JSON.stringify(calls));
+check('点完就地改成「取消跳过整理记忆」', items[1].querySelector('span')?.textContent === '取消跳过整理记忆', items[1].querySelector('span')?.textContent);
+
+// 菜单被复用到另一行时，旧项要被清掉
+injectDreamItems(b2.menu, 'session-other', host);
+const swapped = b2.menu.querySelectorAll(`[${ITEM_ATTR}]`);
+check('换一场会话 → 清掉旧项、只留新的', swapped.length === 2 && swapped[0].getAttribute(SID_ATTR) === 'session-other', `${swapped.length}`);
+
+check('菜单里没有 menuitem 模板时安全返回', (() => {
+  const empty = makeEl('div');
+  try { return injectDreamItems(empty, 's', host) === false; } catch { return false; }
+})());
+
 console.log(`\n${failures === 0 ? '✅ 全部通过' : `❌ ${failures} 项失败`}`);
 process.exit(failures === 0 ? 0 : 1);

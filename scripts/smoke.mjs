@@ -145,7 +145,7 @@ const disposeRoutes = registerVaultRoutes(routeCtx, mod.createVaultApi(
 ));
 await new Promise((r) => setTimeout(r, 50)); // registerVaultRoutes 是同步尝试 + 可能重试
 
-check('注册了 6 条路由', registered.length === 6, registered.map((r) => r.path).join(', '));
+check('注册了 7 条路由', registered.length === 7, registered.map((r) => r.path).join(', '));
 check('路由前缀为 /dsh-mem', registered.every((r) => r.path.startsWith('/dsh-mem/')));
 
 /** 触发一次 handler 并收集响应。 */
@@ -179,6 +179,87 @@ check('file?space=chat&rel=README.md → 200', fl.status === 200);
 check('file 正文非空', typeof fl.body?.text === 'string' && fl.body.text.length > 10);
 
 check('未知 space → 404', (await call('/dsh-mem/tree', '?space=nope')).status === 404);
+
+console.log('\n=== 8a. dream 控制面路由（会话右键菜单那两项）===');
+// 这条路由是**唯一一组写路由**，所以要单独验：
+//  · GET 给菜单用的状态（跳过名单 / 待整理 / 是否在跑）
+//  · POST skip / unskip / run 三个动作与各自的错误码
+//  · run 必须**立刻返回**（整理要几十秒到几分钟，HTTP 不能挂着等）
+{
+  const dp = [];
+  const seen = { run: [], skipped: [] };
+  const skipSet = new Set(['session-aaa']);
+  const dreamApi = {
+    state: () => ({ skipped: [...skipSet], pending: ['session-bbb'], running: false }),
+    setSkip: (sid, skip) => {
+      seen.skipped.push([sid, skip]);
+      if (skip) skipSet.add(sid);
+      else skipSet.delete(sid);
+      return [...skipSet];
+    },
+    start: (ids) => {
+      seen.run.push(ids);
+      return { ok: true, started: true, text: `已开始整理 ${ids.length} 个会话` };
+    },
+  };
+  const dctx = {
+    logger: { info: () => {}, warn: () => {} },
+    get: (n) => (n === 'webServer' ? { register: (r) => { dp.push(r); return () => {}; } } : undefined),
+  };
+  const disposeD = registerVaultRoutes(
+    dctx,
+    mod.createVaultApi({ enabled: true, home: HOME, projectRootMarkers: ['.git'], promptLang: 'zh' }, () => null),
+    { dream: dreamApi },
+  );
+  await new Promise((r) => setTimeout(r, 50));
+
+  /** 触发一次 dream 路由；POST 时同步把 body 喂给 req。 */
+  function callDream(method, payload) {
+    return new Promise((resolve) => {
+      const route = dp.find((r) => r.path === '/dsh-mem/dream');
+      if (!route) return resolve({ status: 0, body: null });
+      const listeners = {};
+      const res = {
+        statusCode: 0,
+        setHeader() {},
+        end(b) { resolve({ status: this.statusCode, body: b ? JSON.parse(b) : null }); },
+      };
+      const req = { method, url: '/dsh-mem/dream', on(ev, fn) { (listeners[ev] ??= []).push(fn); } };
+      route.handler(req, res);
+      // handler 里是同步注册监听、之后 await —— 所以这里同步喂数据是安全的
+      if (payload !== undefined) {
+        const raw = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        for (const fn of listeners.data ?? []) fn(raw);
+      }
+      for (const fn of listeners.end ?? []) fn();
+    });
+  }
+
+  const g = await callDream('GET');
+  check('GET /dsh-mem/dream → 200', g.status === 200, `status=${g.status}`);
+  check('GET 带出跳过名单', Array.isArray(g.body?.skipped) && g.body.skipped.includes('session-aaa'));
+  check('GET 带出待整理名单', Array.isArray(g.body?.pending));
+  check('GET 带出 running 标志', typeof g.body?.running === 'boolean');
+
+  const s = await callDream('POST', { action: 'skip', sessionId: 'session-ccc' });
+  check('POST skip → 200 且名单已更新', s.status === 200 && s.body?.skipped?.includes('session-ccc'), JSON.stringify(s.body));
+  const u = await callDream('POST', { action: 'unskip', sessionId: 'session-ccc' });
+  check('POST unskip → 名单里移除', u.status === 200 && !u.body?.skipped?.includes('session-ccc'));
+
+  const rr = await callDream('POST', { action: 'run', sessionId: 'session-bbb' });
+  check('POST run → 立刻 200 且 started', rr.status === 200 && rr.body?.started === true, JSON.stringify(rr.body));
+  check('run 把会话 id 透传给执行者', JSON.stringify(seen.run) === JSON.stringify([['session-bbb']]), JSON.stringify(seen.run));
+
+  const rAll = await callDream('POST', { action: 'run', sessionIds: ['session-x', 'session-y'] });
+  check('run 支持显式 sessionIds', rAll.status === 200 && JSON.stringify(seen.run[1]) === JSON.stringify(['session-x', 'session-y']));
+
+  check('POST 缺 sessionId → 400', (await callDream('POST', { action: 'skip' })).status === 400);
+  check('未知 action → 400', (await callDream('POST', { action: 'nope' })).status === 400);
+  check('PUT → 405', (await callDream('PUT')).status === 405);
+  check('畸形 JSON 体 → 400（不把 handler 打挂）', (await callDream('POST', '{这不是 json')).status === 400);
+
+  disposeD();
+}
 
 console.log('\n=== 8b. 空间解析的路径安全 ===');
 check('拒绝 project:../ 逃逸', resolveSpaceDir(mod.createVaultApi(

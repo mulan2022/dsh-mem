@@ -548,8 +548,38 @@ export async function apply(ctx: Context, rawConfig: unknown): Promise<void> {
         `项目 ${overview.projects.length} 个`,
     );
 
-    // 3) 记忆空间数据面（只读；webServer 可能尚未就绪，内部会重试）
+    // dream 控制面（会话右键菜单的「现在整理」/「跳过整理」）。
+    //
+    // 跳过名单与待整理名单**不依赖 subagents**，现在就能读；只有 `start`（要派子 agent）
+    // 得等 `subagents` 就绪 —— 见下面的 `tryRegisterDream`。所以这里用一层可变转发：
+    // **路由先挂上，执行者后到位**，UI 不会因为启动竞态而拿不到菜单。
+    let dreamRunner:
+      | ((ids: string[]) => { ok: boolean; started: boolean; text?: string; error?: string })
+      | null = null;
+    let dreamRunning = false;
+
+    const dreamRoutes = {
+      state: () => ({
+        skipped: readDreamSkip(home),
+        pending: listPendingSessions(home, readState(home).dream.lastRunAt),
+        running: dreamRunning,
+      }),
+      setSkip: (sid: string, skip: boolean) => setDreamSkip(home, sid, skip),
+      start: (ids: string[]) =>
+        dreamRunner === null
+          ? {
+              ok: false as const,
+              started: false as const,
+              error: 'subagents 服务还没就绪（整理要派子 agent）—— 稍后再点，或让 AI 用 mem_dream',
+            }
+          : dreamRunner(ids),
+    };
+
+    // 3) 记忆空间数据面（webServer 可能尚未就绪，内部会重试）。
+    //    只有 `/dream` 一条是写路由，且它动的是**整理调度**（跳过名单 / 现在跑一次），
+    //    不是记忆内容 —— 记忆正文依旧没有 HTTP 写入口。
     disposeRoutes = registerVaultRoutes(ctx, api, {
+      dream: dreamRoutes,
       workspaceView: () => ({
         registryPath: workspacesYamlPath(home),
         default: readRegistry(home).default,
@@ -772,6 +802,68 @@ export async function apply(ctx: Context, rawConfig: unknown): Promise<void> {
           };
           return runDream({ home, logger: ctx.logger, spawn, template: loadPrompt }, sessionIds);
         },
+      };
+
+      /**
+       * 找一个人当「父 agent」—— 派子 agent 必须有父（`parent.session` 会被用到）。
+       *
+       * **父是谁不影响整理结果**：素材来自 `raw/turns/`，父只是个归属与环境句柄。
+       * 所以优先级是"谁活着用谁"：**点的那一场自己的 agent → 任何活着的顶层会话**。
+       * 都空就**明确报错，不凭空造会话** —— 造出来的会话会真的落库，在侧栏里多一条，
+       * 为了跑一次整理污染用户的会话列表不划算。
+       */
+      const resolveDreamParent = (preferred: string | undefined): unknown => {
+        const agents = (ctx as unknown as { get?: (n: string) => unknown }).get?.('agents') as
+          | { get?(id: string): unknown; roots?(): unknown[] }
+          | undefined;
+        if (agents === undefined) return null;
+        try {
+          if (preferred !== undefined && preferred !== '') {
+            const live = agents.get?.(preferred);
+            if (live !== undefined && live !== null) return live;
+          }
+          const roots = agents.roots?.();
+          if (Array.isArray(roots) && roots.length > 0) return roots[0];
+        } catch (e) {
+          ctx.logger.warn(`dsh-mem: 找父 agent 出错: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        return null;
+      };
+
+      dreamRunner = (ids: string[]) => {
+        if (dreamRunning) {
+          return { ok: false, started: false, error: '已经有一次整理在跑，等它结束' };
+        }
+        const target =
+          ids.length > 0 ? ids : listPendingSessions(home, readState(home).dream.lastRunAt);
+        if (target.length === 0) {
+          return { ok: true, started: false, text: '没有待整理的会话 —— 不用跑（不烧钱）' };
+        }
+        const parent = resolveDreamParent(ids[0]);
+        if (parent === null) {
+          return {
+            ok: false,
+            started: false,
+            error: '当前没有活着的会话可以当父 agent —— 先打开任一会话再点',
+          };
+        }
+        dreamRunning = true;
+        ctx.logger.info(`dsh-mem: 「现在整理」开始 —— ${target.length} 个会话`);
+        void (async () => {
+          try {
+            const report = await dreamCap.run(target, parent);
+            ctx.logger.info(
+              `dsh-mem: 「现在整理」结束 —— ${report.outcome}：${report.extracts} 份产出 / ` +
+                `${report.observations} 条观察` +
+                `${report.failed.length > 0 ? ` / 失败 ${report.failed.length} 路` : ''}`,
+            );
+          } catch (e) {
+            ctx.logger.warn(`dsh-mem: 「现在整理」失败: ${e instanceof Error ? e.message : String(e)}`);
+          } finally {
+            dreamRunning = false;
+          }
+        })();
+        return { ok: true, started: true, text: `已开始整理 ${target.length} 个会话` };
       };
 
       const dispose = (ctx.tools as { register(t: unknown): unknown }).register(dreamTool(dreamCap));
