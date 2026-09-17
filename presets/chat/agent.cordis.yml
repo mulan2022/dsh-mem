@@ -1,0 +1,70 @@
+# `chat` agent preset —— 聊天模式。
+#
+# 与项目的隔离靠 **preset 身份**，不靠 cwd 猜：dsh-mem 读 `agentPreset` 投影，
+# 见到 id `chat` 就走聊天空间。
+#
+# 刻意**不写 `complete: true`**（那是极简模式的评测锁）：开了它，所有插件注册的
+# prompt section 都会被顶掉 —— 包括 dsh-mem 的静态手册 `dsh-mem:guide`，
+# 模型就变成"手里有工具、却没人告诉它这套东西是什么"。
+#
+# 也刻意**不写 `includeRuntimeContext: false`**：聊天场景需要时间上下文。
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    prefix: You are a helpful assistant.
+
+# 记忆能力。宿主层（profile）已经挂了 dsh-mem；这里显式再挂一次，
+# 是为了确保本 preset 一定拿得到它。
+# **若真机上报重复注册 / 工具重名，删掉这一段** —— 那说明宿主层注册本来就跨
+# preset 可见，不用再挂。
+- id: dsh-mem
+  name: dsh-mem
+
+# 技能机制。没有这两行，`<available_skills>` 目录根本不会出现。
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── shell ───────────────────────────────────────────────────────────────────
+# 2026-09-17 用户拍板要的：「聊天模式是没给 shell 工具吗？？这个还是得给的吧，
+# 要是聊着聊着给点文件什么的呢」—— 聊天不是只说话，随手要跑个命令、看个文件是常态。
+#
+# 宿主层（profile）的同名行被 web-app bundle 关掉了（`disabled: true`），
+# 工具由 preset 自己发 —— 所以这几行必须有，否则模型手里什么都没有。
+# `shell-env` 与两个执行器（pwsh-sandbox / bash-sandbox）留在宿主层，不用管。
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# 后台任务：shell 的 `run_in_background` 要靠它才能取回输出 / 停掉任务。
+# 不给这一行，模型能起后台任务却拿不回结果（工具目录里也看不到 job_output）。
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+# read / read_image / write / edit（"给点文件"的最小闭环：截图也能看）。
+# `fs-observation-policy` 留在宿主层且没被关 —— 所以"改文件前先读一遍"这条规矩
+# 自动生效，不用在这里再挂。
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+# glob / grep：找文件用（纯 shell 也能找，但这两个是建模好的）。
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+
+# ── 刻意不给的（聊天用不上，每一样都在烧提示词与上下文）──────────────────
+#   delegation（子代理 / workflow / ralph）
+#   plan-mode                           计划模式
+#   compaction                          上下文压缩  ← 长聊天可能会想要
+#   agent-instructions                  读工作区 AGENTS.md（聊天不接管项目规矩）
+#   tool-todo / command-goal / present / tool-web
+#
+# 想加哪一个，照 standard preset 的写法复制那一行即可
+# （服务型行必须放进带 `isolate` 的 group —— compaction 就是那样的一组三行）。

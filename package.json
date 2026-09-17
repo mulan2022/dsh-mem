@@ -45,10 +45,10 @@
     }
   },
   "scripts": {
-    "link": "powershell -ExecutionPolicy Bypass -File scripts/link-dsh.ps1",
-    "postinstall": "powershell -ExecutionPolicy Bypass -File scripts/link-dsh.ps1",
-    "build": "npm run link && node build.mjs",
+    "prepare": "node build.mjs",
+    "build": "node build.mjs",
     "watch": "node build.mjs --watch",
+    "link": "powershell -ExecutionPolicy Bypass -File scripts/link-dsh.ps1",
     "typecheck": "tsc --noEmit",
     "check": "node scripts/smoke.mjs && node scripts/smoke-client.mjs"
   },

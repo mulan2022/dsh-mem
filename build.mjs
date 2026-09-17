@@ -5,17 +5,54 @@
  *  - lib/index.js  — host entry, loaded by the dsh Node process (ESM, bundled)
  *  - lib/client.js — browser bundle in ModuleLoader.load format (CJS, react external)
  *
- * Everything is bundled so the plugin is self-contained at runtime. The
- * @deepseek-ai/* packages are resolved at BUILD time through node_modules
- * junction mirrors created by scripts/link-dsh.ps1 (we don't have a pnpm
- * workspace like the reference implementation — our source is the dsh install).
+ * Everything is bundled so the plugin is self-contained at runtime.
+ *
+ * `@deepseek-ai/*` 只在**构建期**需要（打包解析）。解析顺序：
+ *   1. 本地 `node_modules/`（`npm install` 装的，或 `npm run link` 建的 junction 镜像）；
+ *   2. 回退到 **DSH 自己的安装位置**里的那份 —— 本插件只有装了 dsh 才有意义，
+ *      那里必然有一份。这一条让 git 安装时的 `prepare` 在任意平台上都能构建，
+ *      不再依赖 PowerShell、也不再要求 Windows。
  */
 import { build, context } from 'esbuild';
 import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const watch = process.argv.includes('--watch');
-const nodePaths = [fileURLToPath(new URL('./node_modules', import.meta.url))];
+
+/** 本地 node_modules：`npm install` 与 `npm run link` 都往这里放 `@deepseek-ai/*`。 */
+const localModules = fileURLToPath(new URL('./node_modules', import.meta.url));
+
+/**
+ * 给出 esbuild 的解析路径。
+ *
+ * 本地镜像存在就只用本地；否则回退到 DSH 安装位置里的那一份。
+ * 两处都找不到**直接报错退出** —— 静默降级只会把问题推到运行期才暴露。
+ */
+function resolveNodePaths() {
+  const paths = [localModules];
+  if (existsSync(join(localModules, '@deepseek-ai'))) return paths;
+
+  const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
+  const candidates = [
+    join(dshHome, 'profiles', 'node_modules'),
+    join(dshHome, 'profiles', 'web', 'node_modules'),
+  ];
+  const found = candidates.filter((p) => existsSync(join(p, '@deepseek-ai')));
+  if (found.length === 0) {
+    console.error(
+      '[build] 找不到 @deepseek-ai/*（构建期解析用）。\n' +
+        '  本插件依赖已安装的 DSH —— 请在装了 dsh 的环境里构建，\n' +
+        '  或用 DSH_HOME 环境变量指定 dsh home 的位置。\n' +
+        `  已找过：${candidates.join('、')}`,
+    );
+    process.exit(1);
+  }
+  return [...paths, ...found];
+}
+
+const nodePaths = resolveNodePaths();
 
 // 客户端 bundle 的 loader id 必须与包名一致（ModuleLoader 用它做注册键）
 const CLIENT_ID = 'dsh-mem';
@@ -58,11 +95,6 @@ const clientOptions = {
   sourcemap: true,
   logLevel: 'info',
 };
-
-if (!existsSync(new URL('./node_modules/@deepseek-ai', import.meta.url))) {
-  console.error('[build] 缺少 node_modules/@deepseek-ai 镜像。先跑： npm run link');
-  process.exit(1);
-}
 
 // 守卫：cordis.patch.yml 是 YAML，只支持 `#` 注释。
 // 曾把 /** ... */ 写进去，导致 `dsh --dump-config` 报
