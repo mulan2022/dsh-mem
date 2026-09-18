@@ -3,43 +3,47 @@
 # 这里定义"聊天记忆都整理哪些东西"。用户可以直接改这个文件 —— 换模板不算改代码。
 # resident: true 的 section 会**常驻注入**每一次会话（体积要小）；
 # resident: false 的只在检索命中时被读到。
+#
+# ⚠️ 正文是**直接注入给 AI 的记忆**，不是给人看的报告：只写事实，
+# 不要写"这条置信度偏低""先放这里观察"这类**对记忆的评论** —— 那会原样进上下文。
+# 需要留来源就写成 HTML 注释（`<!-- 来源 [^12] -->`），注入前会被剥掉。
 
 space: chat
-description: 关于"你"的记忆：价值观、态度、沟通风格、品味与关系。
+description: 关于"你"的记忆：个人背景、工作、当前状态、偏好，以及"该怎么记住你"。
 
 sections:
-  - name: 价值观与人生观
-    file: sections/values.md
+  - name: 个人背景
+    file: sections/personal.md
     resident: true
     order: 10
-    hint: 对世界的根本判断、在意什么、拒绝什么、人生目标与意义感
+    hint: 身份、经历、居住、人格、沟通风格、生活方式、家人与宠物
 
-  - name: 沟通风格
-    file: sections/communication.md
+  - name: 工作背景
+    file: sections/work.md
     resident: true
     order: 20
-    hint: 说话方式、希望被如何对待、反感什么表达、称谓习惯
+    hint: 职业现状、转型方向、个人项目与外部协作、职业抱负
 
-  - name: 态度与倾向
-    file: sections/attitude.md
-    resident: false
-    order: 30
-    hint: 对具体领域的态度、情绪倾向、偏好与回避
-
-  - name: 品味偏好
-    file: sections/taste.md
-    resident: false
-    order: 40
-    hint: 审美、口味、娱乐偏好、消费取向
-
-  - name: 关系
-    file: sections/relations.md
-    resident: false
-    order: 50
-    hint: 重要的人、关系状态、相处方式
-
-  - name: 本月状态
+  - name: 本月
     file: sections/this-month.md
-    resident: false
+    resident: true
+    order: 30
+    hint: 这个月在推进的事、进度与卡点（按月滚动）
+
+  - name: 早期月份
+    file: sections/earlier-months.md
+    resident: true
+    order: 40
+    hint: 往月归档、按月分小节；近几个月的放「本月」
+
+  - name: 品味与偏好
+    file: sections/taste.md
+    resident: true
+    order: 50
+    hint: 审美、学习风格、兴趣、消费与工具取向、对 AI 的态度、论证与做事风格
+
+  - name: 记忆提示
+    file: sections/memory-tips.md
+    resident: true
     order: 60
-    hint: 近期生活状态、在忙什么、情绪起伏
+    hint: 关于"怎么记住我"的元信息：准确性期待、注入机制、连续性优先

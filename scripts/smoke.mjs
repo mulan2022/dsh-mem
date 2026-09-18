@@ -2243,6 +2243,64 @@ mod.closeIndex(rccDb);
 disposeRoutes();
 check('路由注销不抛错', true);
 
+console.log('\n=== 8m. 常驻 section 的注入正文：剥标题、但不吃小标题 ===');
+// ★ 真机踩过：早先这里是 `replace(/^#.*$/gm, '')` —— 把**所有** # 开头的行都删了，
+//   于是「早期月份」下面的 `## 2026-08`、「本月」下面的 `## 2026-09-17 起…`
+//   全被吃掉，注入出去只剩无从归属的段落。现在只剥文件开头那一行 `# 标题`。
+{
+  const { mkdtempSync, mkdirSync: mkSec, writeFileSync: wrSec, rmSync: rmSec } = await import('node:fs');
+  const secHome = mkdtempSync(join(tmpdir(), 'dsh-mem-sec-'));
+  const secSpace = join(secHome, 'spaces', 'chat');
+  mkSec(join(secSpace, 'sections'), { recursive: true });
+  wrSec(
+    join(secSpace, 'sections.yaml'),
+    [
+      'space: chat',
+      'sections:',
+      '  - name: 早期月份',
+      '    file: sections/earlier.md',
+      '    resident: true',
+      '    order: 10',
+      '  - name: 空的',
+      '    file: sections/empty.md',
+      '    resident: true',
+      '    order: 20',
+      '  - name: 不注入的',
+      '    file: sections/skip.md',
+      '    resident: false',
+      '    order: 30',
+    ].join('\n'),
+    'utf8',
+  );
+  wrSec(
+    join(secSpace, 'sections', 'earlier.md'),
+    '<!-- 给作者看的提示，不该进上下文 -->\n\n# 早期月份\n\n## 2026-08\n\n潜点小程序备案受阻。\n',
+    'utf8',
+  );
+  wrSec(
+    join(secSpace, 'sections', 'empty.md'),
+    '<!-- 提示 -->\n\n# 空的\n\n_尚未有内容。dream 会在确证后填入。_\n',
+    'utf8',
+  );
+  wrSec(join(secSpace, 'sections', 'skip.md'), '# 不注入的\n\nresident:false 不该出现。\n', 'utf8');
+
+  const secs = mod.readResidentSections(secSpace);
+  check(
+    '只取 resident: true 的 section',
+    secs.length === 1 && secs[0].name === '早期月份',
+    JSON.stringify(secs.map((s) => s.name)),
+  );
+  check('★ 小标题留着（月份不会丢）', secs[0]?.body.includes('## 2026-08') === true, secs[0]?.body);
+  check(
+    '文件开头的 # 标题被剥掉（与 #### section 名 重复）',
+    secs[0] !== undefined && !/^#\s/m.test(secs[0].body),
+    JSON.stringify(secs[0]?.body),
+  );
+  check('HTML 注释不进上下文', secs[0]?.body.includes('给作者看的提示') === false);
+  check('「尚未有内容」的 section 算空、不注入', !secs.some((s) => s.name === '空的'));
+  rmSec(secHome, { recursive: true, force: true });
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {
