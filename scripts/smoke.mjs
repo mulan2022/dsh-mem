@@ -109,7 +109,15 @@ db.close();
 console.log('\n=== 5. 项目分区（按需创建）===');
 const part = mod.ensureProjectPartition(HOME, 'D:\\demo\\MemoryChat', ['.git']);
 console.log(`   key=${part.key}  root=${part.root}`);
-check('key 形如 D--demo-MemoryChat', part.key === 'D--demo-MemoryChat', part.key);
+// ⚠️ 这条断言以前写的是 `part.key === 'D--demo-MemoryChat'`（**保留大写盘符**）——
+// 它把 bug 当成了预期：登记表键小写了盘符、分区 key 没小写，同一项目因此切成两个分区。
+// 现在断言的是真正的不变量：盘符大小写不影响身份。
+check('key 归一为小写盘符', part.key === 'd--demo-MemoryChat', part.key);
+check(
+  '★ 大写盘符与小写盘符落到同一个分区目录',
+  mod.ensureProjectPartition(HOME, 'd:/demo/MemoryChat', ['.git']).dir === part.dir,
+  part.dir,
+);
 check('分区目录已建立', existsSync(part.dir));
 const partFiles = readdirSync(part.dir).sort();
 console.log('   分区顶层: ' + partFiles.join(', '));
@@ -1055,6 +1063,50 @@ check(
   JSON.stringify(reg0.spaces),
 );
 check('反斜杠与正斜杠归一', mod.registryKey('D:\\demo\\x') === mod.registryKey('d:/demo/x'), mod.registryKey('D:\\demo\\x'));
+
+// ---- ★ 盘符大小写不再切出两个分区（真机 bug 回归）----
+// 真机踩过：登记表键把盘符小写了，而**分区 key 没有** —— 同一个项目算出两个 key，
+// 于是 projects/ 下长出两个分区目录（`MemoryChat` 与 `MemoryChat-ryChat`），
+// 项目记忆被劈成两半。根因是"两处各写一遍归一"，现在只剩 paths.identityPath 一份。
+check(
+  '★ projectKey 对大写/小写盘符给同一个 key',
+  mod.projectKey('D:\\demo\\MemoryChat') === mod.projectKey('d:/demo/MemoryChat'),
+  `${mod.projectKey('D:\\demo\\MemoryChat')} vs ${mod.projectKey('d:/demo/MemoryChat')}`,
+);
+check(
+  '★ 分区 key 与登记表键共用同一套身份归一',
+  mod.identityPath('D:\\demo\\x') === mod.registryKey('D:\\demo\\x'),
+  mod.identityPath('D:\\demo\\x'),
+);
+check(
+  '显示形态保留盘符大小写、身份形态小写（两者刻意分开）',
+  mod.normalizeWorkspacePath('D:\\demo\\x') === 'D:/demo/x' && mod.identityPath('D:\\demo\\x') === 'd:/demo/x',
+  `${mod.normalizeWorkspacePath('D:\\demo\\x')} / ${mod.identityPath('D:\\demo\\x')}`,
+);
+
+// ---- 同名项目不再撞车：去重后缀必须是真哈希 ----
+// 旧实现是 `key.replace(/[^A-Za-z0-9]/g,'').slice(-6)` —— 取的是 **key 的末 6 位**，
+// 路径型 key 的末几位几乎总是项目名本身（`D--demo-MemoryChat` → `ryChat`），
+// 于是目录名变成 `MemoryChat-ryChat`；更糟的是**两个同名项目会算出同一个后缀**。
+{
+  const { mkdirSync: mkSame, writeFileSync: wrSame } = await import('node:fs');
+  const sameName = 'SameName';
+  const occupy = join(HOME, '.dsh-mem', 'spaces', 'project', 'projects', sameName);
+  mkSame(occupy, { recursive: true });
+  wrSame(join(occupy, 'meta.yaml'), 'key: d--a-SameName\n', 'utf8');
+
+  const dupA = mod.projectEntryDir(HOME, 'd--b-SameName', sameName);
+  const dupB = mod.projectEntryDir(HOME, 'd--c-SameName', sameName);
+  check('同名不同项目 → 目录名带后缀', dupA !== occupy && dupA.startsWith(occupy + '-'), dupA);
+  check('★ 两个不同 key 不会算出同一个后缀（旧实现会）', dupA !== dupB, `${dupA} / ${dupB}`);
+  check(
+    '后缀不是项目名的尾巴（旧实现会得到 -ryChat 这种）',
+    !dupA.endsWith('ameName') && !dupB.endsWith('ameName'),
+    `${dupA} / ${dupB}`,
+  );
+  check('同一个 key 每次算出同一个目录（确定性）', mod.projectEntryDir(HOME, 'd--b-SameName', sameName) === dupA);
+  check('key 与既有分区一致时仍用原目录（不无故加后缀）', mod.projectEntryDir(HOME, 'd--a-SameName', sameName) === occupy);
+}
 check('非法类型行被跳过而不是抛', !('d:/bad' in reg0.spaces));
 check('坏 default 回退成 ask', mod.parseRegistry('default: 乱写').default === 'ask');
 const roundTrip = mod.parseRegistry(mod.renderRegistry(reg0));

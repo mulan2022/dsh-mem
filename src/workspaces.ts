@@ -21,7 +21,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import { readState, updateState } from './state.js';
 
-import { findProjectRootOrNull, normalizeWorkspacePath, projectKey, workspacesYamlPath } from './paths.js';
+import { findProjectRootOrNull, identityPath, normalizeWorkspacePath, projectKey, workspacesYamlPath } from './paths.js';
 
 export type WorkspaceKind = 'chat' | 'project';
 
@@ -43,14 +43,13 @@ export interface WorkspaceRegistry {
 export const EMPTY_REGISTRY: WorkspaceRegistry = { spaces: {}, default: 'ask' };
 
 /**
- * 登记表用的路径键：统一正斜杠 + **盘符小写**。
+ * 登记表用的路径键。
  *
- * 只小写盘符、不整条小写：Windows 路径大小写不敏感，盘符大小写几乎必然不一致；
- * 而整条小写会在 Linux 上把两个只差大小写的目录悄悄并成一个 —— 静默合并比不匹配更糟。
+ * **与项目分区的 key 共用同一套身份归一**（`paths.identityPath`，盘符小写）。
+ * 以前这里自己写了一遍、而 `projectKey` 没写 —— 两处不一致的后果是同一个项目
+ * 按盘符大小写切成了两个分区（真机踩过）。现在只剩一份实现，漂移不可能再发生。
  */
-export function registryKey(p: string): string {
-  return normalizeWorkspacePath(p).replace(/^([A-Za-z]):/, (_, d: string) => `${d.toLowerCase()}:`);
-}
+export const registryKey: (p: string) => string = identityPath;
 
 function isKind(v: string): v is WorkspaceKind {
   return v === 'chat' || v === 'project';

@@ -67,8 +67,25 @@ export function projectEntryDir(home: string, key: string, name: string): string
   const direct = join(entries, base);
   const owner = readMetaKey(direct);
   if (owner === null || owner === key) return direct;
-  const suffix = key.replace(/[^A-Za-z0-9]/g, '').slice(-6) || 'x';
-  return join(entries, `${base}-${suffix}`);
+  return join(entries, `${base}-${shortHash(key)}`);
+}
+
+/**
+ * key 的短哈希（FNV-1a 32 位 → base36）。
+ *
+ * **旧实现取的是 key 的末 6 位**（`key.replace(/[^A-Za-z0-9]/g,'').slice(-6)`），
+ * 注释还写着"短哈希"—— 其实不是，而且有两个后果：
+ *  1. 路径型 key 的末几位**几乎总是项目名本身**（`D--demo-MemoryChat` → `ryChat`），
+ *     目录名变成 `MemoryChat-ryChat`，既难看又看不出在区分什么；
+ *  2. **两个同名项目会算出同一个后缀** —— 它根本去不了重。
+ */
+function shortHash(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36).padStart(6, '0').slice(-6);
 }
 
 /** 读某个项目目录的 `meta.yaml` 里的 key（读不到返回 null）。 */
@@ -153,9 +170,30 @@ export function historyStatePath(home: string): string {
 
 /**
  * 规范化工作区路径：统一为正斜杠，**保留盘符大小写**（人类可读）。
+ *
+ * ⚠️ 这是**显示**用的形态。要拿路径当身份（分区 key、登记表键），用下面的
+ * `identityPath` —— 两者刻意分开，理由见它的注释。
  */
 export function normalizeWorkspacePath(p: string): string {
   return resolve(p).replace(/\\/g, '/');
+}
+
+/**
+ * 「身份」用的路径归一：正斜杠 + **盘符小写**。
+ *
+ * **同一目录必须只有一个身份。** Windows 路径大小写不敏感，`D:\x` 与 `d:\x`
+ * 是同一个目录，但 `path.resolve` 会**原样保留输入里的盘符大小写** —— 于是同一个
+ * 项目会算出两个 key、切成两个分区。本机真机踩过：`D--demo-MemoryChat` 与
+ * `d--demo-MemoryChat` 各自建了一个分区目录，项目记忆被劈成两半。
+ *
+ * 只小写盘符、不整条小写：整条小写会在 Linux 上把两个只差大小写的目录**悄悄并成一个**
+ * —— 静默合并比不匹配更糟。
+ *
+ * 分区 key 与登记表键**都走这一份**：以前是两处各写一遍（`projectKey` 没小写、
+ * `workspaces.registryKey` 小写了），正是那处不一致导致了上面的分叉。
+ */
+export function identityPath(p: string): string {
+  return normalizeWorkspacePath(p).replace(/^([A-Za-z]):/, (_, d: string) => `${d.toLowerCase()}:`);
 }
 
 /**
@@ -196,7 +234,7 @@ export function findProjectRootOrNull(cwd: string, markers: readonly string[]): 
  * 于是 `D:\demo\MemoryChat` → `D--demo-MemoryChat`。
  */
 export function projectKey(root: string): string {
-  return normalizeWorkspacePath(root)
+  return identityPath(root)
     .replace(/[:/\\]/g, '-')
     .replace(/-{3,}/g, '--')
     .replace(/^-+|-+$/g, '');
