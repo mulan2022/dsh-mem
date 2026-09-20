@@ -247,6 +247,7 @@ export {
   type WorkspaceVault,
 } from './vault-api.js';
 export { registerVaultRoutes, resolveSpaceDir } from './routes.js';
+export { buildExtractPrompt, buildMergePrompt } from './dream-run.js';
 export { identityPath, normalizeWorkspacePath, projectEntryDir, projectKey } from './paths.js';
 export { MAX_INSTRUCTIONS, addInstruction, readInstructions, removeInstruction } from './instructions.js';
 export {

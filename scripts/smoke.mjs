@@ -2301,6 +2301,38 @@ console.log('\n=== 8m. 常驻 section 的注入正文：剥标题、但不吃小
   rmSec(secHome, { recursive: true, force: true });
 }
 
+console.log('\n=== 8n. merge 提示词必须带上「今天」+ 提示词与 sections.yaml 不许漂移 ===');
+{
+  // 「本月」跨月滚动全靠这一步：不注入日期，agent 只能凭感觉判断"是不是新的一个月"。
+  const out = mod.buildMergePrompt('TEMPLATE-BODY', {
+    home: '/tmp/h',
+    extracts: [],
+    now: new Date(2026, 8, 18), // 2026-09-18
+  });
+  check(
+    'merge 提示词带上今天日期',
+    out.includes('2026-09-18'),
+    out.split('\n').find((l) => l.includes('今天')) ?? '(没找到)',
+  );
+  check('并点明「本月」是哪个月', out.includes('2026-09'), out.split('\n').find((l) => l.includes('本月')) ?? '(没找到)');
+  check('原文模板仍在', out.includes('TEMPLATE-BODY'));
+
+  const { readFileSync: rf } = await import('node:fs');
+  const mergeTpl = rf(new URL('../prompts/dream-merge.md', import.meta.url), 'utf8');
+  const chatTpl = rf(new URL('../prompts/dream-extract-chat.md', import.meta.url), 'utf8');
+  const projTpl = rf(new URL('../prompts/dream-extract-project.md', import.meta.url), 'utf8');
+
+  check('merge 提示词里有跨月滚动规矩', mergeTpl.includes('跨月') && mergeTpl.includes('早期月份'));
+  check(
+    'extract 的分类跟着 sections.yaml 走（没有旧分类名）',
+    !chatTpl.includes('本月状态') && !chatTpl.includes('价值观与人生观') && chatTpl.includes('早期月份'),
+  );
+  // ★ 这条是给"改了结构忘改提示词"兜底的：上一轮换掉 sections.yaml 的六个分类时，
+  //   三处旧 section 文件名留在了提示词里，两边对不上。
+  const stale = /values\.md|attitude\.md|communication\.md|relations\.md/.exec(mergeTpl + chatTpl + projTpl);
+  check('提示词里不引用已删掉的 section 文件', stale === null, stale ? `残留：${stale[0]}` : '');
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {

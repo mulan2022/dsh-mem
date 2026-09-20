@@ -27,6 +27,7 @@ import {
   type ExtractResult,
 } from './dream-json.js';
 import type { DreamOutcome } from './dream.js';
+import { localDate } from './markdown.js';
 import { readTurns } from './turns.js';
 
 /** 一次"派个 agent 去干活"的请求。 */
@@ -80,9 +81,12 @@ export function buildExtractPrompt(
 /** 阶段 B 的提示词：把各空间归拢好的材料交给写者。 */
 export function buildMergePrompt(
   template: string,
-  args: { home: string; extracts: readonly ExtractResult[] },
+  args: { home: string; extracts: readonly ExtractResult[]; now: Date },
 ): string {
   const bySpace = groupBySpace(args.extracts);
+  // 「本月」的滚动要靠它 —— 不注入日期，agent 只能靠感觉判断"现在是不是新的一个月"。
+  const today = localDate(args.now);
+  const thisMonth = today.slice(0, 7);
   const block = (name: string, list: readonly ExtractResult[]): string => {
     if (list.length === 0) return `### ${name}\n（无）`;
     const deduped = dedupeObservations(list);
@@ -111,6 +115,8 @@ export function buildMergePrompt(
     '## 本次任务（具体路标）',
     '',
     `- 素材根目录：\`${args.home}/.dsh-mem/raw/turns/\``,
+    `- **今天：${today}** —— 所以「本月」= \`${thisMonth}\`。` +
+      '跨月时要把「本月」里已经过去的月份滚进「早期月份」（见提示词正文）。',
     '- 两批 agent 的产出（已经过宿主校验：编造的锚点已被剔除）：',
     '',
     block('聊天记忆（spaces/chat/）', bySpace.chat),
@@ -211,7 +217,11 @@ export async function runDream(deps: DreamRunDeps, pending: readonly string[]): 
   try {
     const receipt = await deps.spawn({
       label: 'dream:merge',
-      prompt: buildMergePrompt(deps.template('dream-merge'), { home: deps.home, extracts }),
+      prompt: buildMergePrompt(deps.template('dream-merge'), {
+        home: deps.home,
+        extracts,
+        now: new Date(),
+      }),
     });
     const parsed = extractJson(receipt);
     if (parsed === null) {
