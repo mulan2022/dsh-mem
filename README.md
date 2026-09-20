@@ -2,6 +2,8 @@
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的跨会话记忆插件。
 
+![记忆空间：常驻记忆 / 聊天记忆 / 项目记忆](docs/images/memory-space.png)
+
 **聊天记忆**这一层是照着 Kimi 客户端的记忆系统复刻的：40 场滚动原文（RCC）+ dream 整理 +
 50 条硬性常驻记忆，再加上 BM25 top-k 命中注入。好处是跨对话聊天很顺滑 —— 换个会话它还记得
 你是谁、上次聊到哪。坏处是**很耗 token**：每场会话注入一次，现在约 8500 字（约 5k token）；
@@ -33,6 +35,8 @@ dsh plugin --profile web add github:mulan2022/dsh-mem
 mkdir -p ~/.dsh/.agent-presets/chat
 cp presets/chat/* ~/.dsh/.agent-presets/chat/
 ```
+
+![在会话里选「聊天模式」](docs/images/chat-mode.png)
 
 目录名必须是 `chat` —— preset 的 id 取自目录名。重启后新建会话时选「聊天模式」，
 它会带着记忆空间 + 技能目录 + shell 与文件读写。
