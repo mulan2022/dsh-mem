@@ -56,8 +56,20 @@
   name: '@deepseek-ai/dsh-tool-fs'
 
 # glob / grep：找文件用（纯 shell 也能找，但这两个是建模好的）。
+#
+# ⚠️ `sampleOverCapGlobResults` 是**必填项**（插件 schema 里是 `.required()`、没有默认值）。
+# 宿主层那条同名行之所以带着它，就是这个原因；preset 里自己发这条行时不写就会装配失败：
+#   invalid config: $.sampleOverCapGlobResults missing required value
+# 值取 `false` = 超出上限时按原有分页截断（与宿主层一致）。
+#
+# 踩坑史：这个 preset 09-15 验证过能用，09-18 DSH 升级后该字段变成必填。
+# 宿主层那几行都是 `disabled: true`，**它们的 Config 根本没被校验过** ——
+# 所以宿主不能替 preset 证明"不缺必填项"。改这个文件时，逐行对一下
+# 对应插件的 schema 里有没有 `.required()`。
 - id: tool-fs-search
   name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
 
 # ── 刻意不给的（聊天用不上，每一样都在烧提示词与上下文）──────────────────
 #   delegation（子代理 / workflow / ralph）
