@@ -27,6 +27,14 @@ import {
   type ExtractResult,
 } from './dream-json.js';
 import type { DreamOutcome } from './dream.js';
+import {
+  maxTurnOf,
+  readCompact,
+  writeCompact,
+  writeTurnWindow,
+  type SessionCompact,
+  type TurnWindow,
+} from './compacts.js';
 import { localDate } from './markdown.js';
 import { readTurns } from './turns.js';
 
@@ -57,10 +65,20 @@ export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 /** 给模板追加一段"本次任务"的具体路标（模板本身是通用的，不带具体路径）。 */
 export function buildExtractPrompt(
   template: string,
-  args: { home: string; session: string; kind: ExtractKind; projectName: string | null },
+  args: {
+    home: string;
+    session: string;
+    kind: ExtractKind;
+    projectName: string | null;
+    /** 上次留的对话摘要（有它才走增量）。 */
+    digest?: SessionCompact;
+    /** 只含新增轮次的窗口文件。 */
+    window?: TurnWindow;
+  },
 ): string {
   const turnsPath = `${args.home}/.dsh-mem/raw/turns/${args.session}.jsonl`;
-  return [
+  const incremental = args.digest !== undefined && args.window !== undefined;
+  const lines = [
     template,
     '',
     '---',
@@ -68,14 +86,33 @@ export function buildExtractPrompt(
     '## 本次任务（具体路标）',
     '',
     `- 会话 id：\`${args.session}\``,
-    `- 你的那份原始轮次：\`${turnsPath}\``,
+    incremental
+      ? `- 你的那份素材（**增量窗口**，只含新增轮次）：\`${(args.window as TurnWindow).path.replace(/\\/g, '/')}\``
+      : `- 你的那份原始轮次（**整场**）：\`${turnsPath}\``,
     `- 你负责的空间：\`${args.kind}\``,
     args.kind === 'project'
       ? `- 项目名：\`${args.projectName ?? '(未知)'}\``
       : '- 项目名：（不适用 —— 你是闲聊 agent）',
-    '',
-    '产出**只输出一个 JSON 对象**，前后不要有别的话。',
-  ].join('\n');
+  ];
+
+  if (incremental) {
+    const d = args.digest as SessionCompact;
+    const w = args.window as TurnWindow;
+    lines.push(
+      '',
+      `**这个会话你已经整理过前 ${d.coveredThroughTurn} 轮**（整理于 ${d.at}）。那次留下的摘要：`,
+      '',
+      '```',
+      d.text,
+      '```',
+      '',
+      `它是**背景**，不要重复提取；但新轮次里的指代要靠它才看得懂。`,
+      `**真正要处理的只有窗口文件里那 ${w.count} 轮新增**（第 ${d.coveredThroughTurn + 1}–${w.throughTurn} 轮）。`,
+    );
+  }
+
+  lines.push('', '产出**只输出一个 JSON 对象**，前后不要有别的话。');
+  return lines.join('\n');
 }
 
 /** 阶段 B 的提示词：把各空间归拢好的材料交给写者。 */
@@ -166,6 +203,12 @@ export async function runDream(deps: DreamRunDeps, pending: readonly string[]): 
         (async () => {
           const label = `dream:${kind}:${session.slice(0, 8)}`;
           let text = '';
+          // 增量：上次留过摘要就只喂「摘要 + 第 N 轮之后的新增」，没留过就整场读（现状）
+          const prev = readCompact(deps.home, session, kind);
+          const window =
+            prev === null
+              ? null
+              : writeTurnWindow(deps.home, session, kind, prev.coveredThroughTurn);
           try {
             text = await deps.spawn({
               label,
@@ -174,6 +217,8 @@ export async function runDream(deps: DreamRunDeps, pending: readonly string[]): 
                 session,
                 kind,
                 projectName: deps.projectName ?? null,
+                ...(prev === null ? {} : { digest: prev }),
+                ...(window === null ? {} : { window }),
               }),
             });
           } catch (e) {
@@ -184,6 +229,16 @@ export async function runDream(deps: DreamRunDeps, pending: readonly string[]): 
           if (!report.ok || report.result === null) {
             failed.push(`${label}（${report.errors.join('；')}）`);
             return;
+          }
+          // 顺便留下这次的对话摘要 —— 下一晚就可以只喂增量。
+          // **覆盖轮次由宿主盖章**（agent 只出文本）：让它自己报轮号是白送一个失败模式。
+          const digest = report.result.raw.digest;
+          if (typeof digest === 'string' && digest.trim() !== '') {
+            writeCompact(deps.home, session, kind, {
+              coveredThroughTurn: maxTurnOf(deps.home, session),
+              at: new Date().toISOString(),
+              text: digest,
+            });
           }
           // 编造的锚点 → 那一条不要（设计里的硬规矩：没出处的记忆不如不记）
           const bad = new Set(missingAnchors(report.result, anchorsBySpace[report.result.space]));

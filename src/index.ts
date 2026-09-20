@@ -256,6 +256,18 @@ export {
 } from './vault-api.js';
 export { registerVaultRoutes, resolveSpaceDir } from './routes.js';
 export { buildExtractPrompt, buildMergePrompt } from './dream-run.js';
+export {
+  COMPACT_MAX_CHARS,
+  compactPath,
+  listCompacts,
+  maxTurnOf,
+  readCompact,
+  windowPath,
+  writeCompact,
+  writeTurnWindow,
+  type SessionCompact,
+  type TurnWindow,
+} from './compacts.js';
 export { attachmentObjectPath } from './paths.js';
 export { parseSectionsYaml, rolloverMonths, type MonthRolloverResult } from './sections.js';
 export { identityPath, normalizeWorkspacePath, projectEntryDir, projectKey } from './paths.js';

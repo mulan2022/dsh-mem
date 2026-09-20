@@ -2544,6 +2544,99 @@ console.log('\n=== 8q. 附件：采集元数据 + 指向原件（不搬字节）
   check('没给 home 时 path 为 null（宁可不给，也不猜错）', t5?.files?.[0]?.path === null);
 }
 
+console.log('\n=== 8r. dream 增量：留摘要 + 下次只喂新增窗口 ===');
+{
+  // ★ 原来 dream 是「挑中有新素材的会话 → 整场原文重读」。一个 50 轮的会话第 41 轮才有
+  //   新内容，也要把 1–50 轮全读一遍（长会话单场十几万字 × 两个 agent）。照 Claude Code
+  //   的 compact 那套做增量：这次留摘要，下次喂「摘要 + 新增轮次」。
+  const {
+    mkdtempSync: mkC,
+    mkdirSync: mkdirC,
+    writeFileSync: wrC,
+    readFileSync: rdC,
+    rmSync: rmC,
+  } = await import('node:fs');
+  const cHome = mkC(join(tmpdir(), 'dsh-mem-cmp-'));
+  const cTurns = join(cHome, '.dsh-mem', 'raw', 'turns');
+  mkdirC(cTurns, { recursive: true });
+  const recs = [1, 2, 3, 4, 5].map((n) => ({
+    session: 's1',
+    turn: n,
+    at: '2026-09-01T00:00:00.000Z',
+    cwd: null,
+    space: 'chat',
+    user: `第${n}轮`,
+    assistant: '',
+    tools: [],
+  }));
+  wrC(join(cTurns, 's1.jsonl'), `${recs.map((r) => JSON.stringify(r)).join('\n')}\n`, 'utf8');
+
+  check('maxTurnOf 取会话最大轮次', mod.maxTurnOf(cHome, 's1') === 5, String(mod.maxTurnOf(cHome, 's1')));
+  check('没留过摘要时 readCompact 返回 null', mod.readCompact(cHome, 's1', 'chat') === null);
+
+  mod.writeCompact(cHome, 's1', 'chat', {
+    coveredThroughTurn: 3,
+    at: '2026-09-20T00:00:00.000Z',
+    text: '前三轮的摘要。',
+  });
+  const c1 = mod.readCompact(cHome, 's1', 'chat');
+  check('摘要往返：覆盖轮次保留', c1?.coveredThroughTurn === 3, JSON.stringify(c1));
+  check('摘要往返：正文保留', c1?.text === '前三轮的摘要。', c1?.text);
+  check('★ 摘要按空间分开（chat 与 project 互不覆盖）', mod.readCompact(cHome, 's1', 'project') === null);
+
+  const w = mod.writeTurnWindow(cHome, 's1', 'chat', 3);
+  check('窗口只切出第 3 轮之后', w !== null && w.count === 2 && w.throughTurn === 5, JSON.stringify(w));
+  const winTurns = rdC(join(cHome, '.dsh-mem', 'raw', 'window', 's1.chat.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l).turn);
+  check('窗口文件内容正确（只剩 4、5 轮）', JSON.stringify(winTurns) === '[4,5]', JSON.stringify(winTurns));
+  check('没有新增轮次时不写窗口', mod.writeTurnWindow(cHome, 's1', 'chat', 5) === null);
+
+  const pWhole = mod.buildExtractPrompt('TPL', { home: cHome, session: 's1', kind: 'chat', projectName: null });
+  check(
+    '没摘要时路标指向整场（行为与以前一致）',
+    pWhole.includes('整场') && pWhole.includes('s1.jsonl'),
+    pWhole.split('\n').find((l) => l.includes('素材') || l.includes('原始轮次')) ?? '',
+  );
+  const pInc = mod.buildExtractPrompt('TPL', {
+    home: cHome,
+    session: 's1',
+    kind: 'chat',
+    projectName: null,
+    digest: c1,
+    window: w,
+  });
+  check(
+    '★ 有摘要时路标改指增量窗口',
+    pInc.includes('增量窗口') && pInc.includes('s1.chat.jsonl'),
+    pInc.split('\n').find((l) => l.includes('素材')) ?? '',
+  );
+  check('提示词里带上上次摘要（新轮次的指代要靠它）', pInc.includes('前三轮的摘要。'));
+  check('提示词里点明这次要处理第 4–5 轮', pInc.includes('第 4–5 轮'), pInc.includes('第 4–5 轮') ? '' : pInc.slice(-260));
+  check('提示词里点明已整理过前 3 轮', pInc.includes('已经整理过前 3 轮'));
+
+  mod.writeCompact(cHome, 's2', 'chat', {
+    coveredThroughTurn: 1,
+    at: '2026-09-20T00:00:00.000Z',
+    text: 'a'.repeat(mod.COMPACT_MAX_CHARS + 500),
+  });
+  check(
+    '摘要超长会被截断（写进去的必须短）',
+    (mod.readCompact(cHome, 's2', 'chat')?.text.length ?? 0) <= mod.COMPACT_MAX_CHARS + 1,
+    String(mod.readCompact(cHome, 's2', 'chat')?.text.length),
+  );
+  check(
+    '空摘要不写盘',
+    mod.writeCompact(cHome, 's3', 'chat', { coveredThroughTurn: 1, at: 'x', text: '   ' }) === false,
+  );
+  check('摘要文件坏掉时当"没有"（退回整场重读，不炸）', (() => {
+    wrC(join(cHome, '.dsh-mem', 'raw', 'compacts', 's1.project.md'), '不是合法格式', 'utf8');
+    return mod.readCompact(cHome, 's1', 'project') === null;
+  })());
+  rmC(cHome, { recursive: true, force: true });
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {
