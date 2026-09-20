@@ -62,6 +62,7 @@ import {
   listPartitionKeys,
   migrateLegacyProjectDirs,
   projectEntryDirs,
+  rolloverMonthSections,
   type ResolvedMemConfig,
 } from './vault-api.js';
 import { installDream, parseClock } from './dream.js';
@@ -237,6 +238,7 @@ export {
   listPartitionKeys,
   migrateLegacyProjectDirs,
   projectEntryDirs,
+  rolloverMonthSections,
   resolveWorkspaceKind,
   type LegacySharedReport,
   type PartitionInfo,
@@ -248,6 +250,7 @@ export {
 } from './vault-api.js';
 export { registerVaultRoutes, resolveSpaceDir } from './routes.js';
 export { buildExtractPrompt, buildMergePrompt } from './dream-run.js';
+export { parseSectionsYaml, rolloverMonths, type MonthRolloverResult } from './sections.js';
 export { identityPath, normalizeWorkspacePath, projectEntryDir, projectKey } from './paths.js';
 export { MAX_INSTRUCTIONS, addInstruction, readInstructions, removeInstruction } from './instructions.js';
 export {
@@ -520,6 +523,24 @@ export async function apply(ctx: Context, rawConfig: unknown): Promise<void> {
     const moved = migrateLegacyProjectDirs(home);
     if (moved.length > 0) {
       ctx.logger.info(`dsh-mem: 已把 ${moved.length} 个项目目录从 proj/ 搬到 projects/：${moved.join('、')}`);
+    }
+
+    // 1.5) 跨月滚动：「本月」里已经过去的月份，由**代码**搬进「早期月份」。
+    //
+    // 判据是确定的（今天几号 vs 小节标题里的月份），所以不交给 dream agent ——
+    // 它只会在"想得起来"的时候做，于是「本月」越堆越长、注入的上下文里长期挂着
+    // 几个月前的事。这里与每次 dream 之前都跑一遍，做一个便宜的幂等自愈。
+    {
+      const now = new Date();
+      const rolled = rolloverMonthSections(sharedRootDir, now);
+      for (const dir of [chatDir, projectSpaceDir(home), ...projectEntryDirs(home)]) {
+        rolled.push(...rolloverMonthSections(dir, now));
+      }
+      for (const r of rolled) {
+        ctx.logger.info(
+          `dsh-mem: 跨月滚动 ${r.from} → ${r.to}：${r.moved.map((m) => m.heading).join('、')}`,
+        );
+      }
     }
 
     // 2) 派生索引：从 vault 文件重建。
@@ -802,6 +823,15 @@ export async function apply(ctx: Context, rawConfig: unknown): Promise<void> {
               await run.dispose().catch(() => undefined);
             }
           };
+          // 汇总之前先把跨月滚动做掉，让阶段 B 看到的就是已经滚好的段落
+          // （阶段 B 是 agent 在写文件，宿主能确定完成的只有这一步前的准备）。
+          for (const dir of [sharedRootDir, chatDir, projectSpaceDir(home), ...projectEntryDirs(home)]) {
+            for (const r of rolloverMonthSections(dir, new Date())) {
+              ctx.logger.info(
+                `dsh-mem: 跨月滚动 ${r.from} → ${r.to}：${r.moved.map((m) => m.heading).join('、')}`,
+              );
+            }
+          }
           return runDream({ home, logger: ctx.logger, spawn, template: loadPrompt }, sessionIds);
         },
       };

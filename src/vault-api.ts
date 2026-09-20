@@ -27,6 +27,7 @@ import {
 } from './paths.js';
 import {
   parseSectionsYaml,
+  rolloverMonths,
   seedLog,
   seedObservations,
   seedSectionFile,
@@ -290,6 +291,37 @@ export function ensureProjectEntry(
   const created = ensureSpaceVault(dir, 'project-entry');
   const meta = ensureProjectMeta(dir, key, root);
   return { name: meta.name, dir, created };
+}
+
+/**
+ * 按 `sections.yaml` 里声明的 `window` 做**跨月滚动**。
+ *
+ * 纯搬运：读两个文件 → 算 → **只在真有东西要搬时才写回**（闲着不碰盘，幂等）。
+ * 由宿主在**启动时**与**每次 dream 之前**调用 —— 不依赖任何 agent 记得去做。
+ *
+ * @returns 被搬动的小节；空数组表示无事发生（也没写盘）
+ */
+export function rolloverMonthSections(
+  vaultDir: string,
+  now: Date,
+): Array<{ from: string; to: string; moved: Array<{ month: string; heading: string }> }> {
+  const yaml = readVaultFile(vaultDir, VAULT.sectionsYaml);
+  if (!yaml) return [];
+  const specs = parseSectionsYaml(yaml);
+  const from = specs.find((s) => s.window === 'current-month');
+  const to = specs.find((s) => s.window === 'month-archive');
+  if (from === undefined || to === undefined) return [];
+
+  const curText = readVaultFile(vaultDir, from.file);
+  const arcText = readVaultFile(vaultDir, to.file);
+  if (curText === null || arcText === null) return [];
+
+  const r = rolloverMonths(curText, arcText, now);
+  if (r.moved.length === 0) return [];
+
+  writeVaultFile(vaultDir, from.file, r.current);
+  writeVaultFile(vaultDir, to.file, r.archive);
+  return [{ from: from.file, to: to.file, moved: r.moved }];
 }
 
 /**

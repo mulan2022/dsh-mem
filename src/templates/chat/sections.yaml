@@ -7,6 +7,12 @@
 # ⚠️ 正文是**直接注入给 AI 的记忆**，不是给人看的报告：只写事实，
 # 不要写"这条置信度偏低""先放这里观察"这类**对记忆的评论** —— 那会原样进上下文。
 # 需要留来源就写成 HTML 注释（`<!-- 来源 [^12] -->`），注入前会被剥掉。
+#
+# `window` 是**按月滚动的声明**（可选）：
+#   current-month  「本月」——只该有当前这个月的小节，更早的由**宿主代码**整块搬走
+#   month-archive  「早期月份」——滚动落点
+# 判据是"今天几号 vs 小节标题里的月份"，确定得很，所以归**代码**管；
+# agent 只负责把小节标题写成 `## YYYY-MM…`（它唯一需要保证的格式）。
 
 space: chat
 description: 关于"你"的记忆：个人背景、工作、当前状态、偏好，以及"该怎么记住你"。
@@ -28,13 +34,15 @@ sections:
     file: sections/this-month.md
     resident: true
     order: 30
-    hint: 这个月在推进的事、进度与卡点（按月滚动）
+    window: current-month
+    hint: 这个月在推进的事、进度与卡点；小节标题必须以 `## YYYY-MM` 开头（跨月滚动靠它判断）
 
   - name: 早期月份
     file: sections/earlier-months.md
     resident: true
     order: 40
-    hint: 往月归档、按月分小节；近几个月的放「本月」
+    window: month-archive
+    hint: 往月归档、按月分小节；更早的月份由宿主代码从「本月」滚进来，不用手搬
 
   - name: 品味与偏好
     file: sections/taste.md

@@ -2333,6 +2333,97 @@ console.log('\n=== 8n. merge 提示词必须带上「今天」+ 提示词与 sec
   check('提示词里不引用已删掉的 section 文件', stale === null, stale ? `残留：${stale[0]}` : '');
 }
 
+console.log('\n=== 8o. 跨月归档由代码做（agent 只管标题格式）===');
+{
+  // ★ 这件事必须是代码：判据是确定的（今天几号 vs 小节标题里的月份）。
+  //   交给 agent 只会在它"想得起来"的时候发生 ——「本月」于是越堆越长。
+  const specs = mod.parseSectionsYaml(
+    'sections:\n  - name: 本月\n    file: a.md\n    resident: true\n    order: 1\n    window: current-month\n',
+  );
+  check('解析 window: current-month', specs[0]?.window === 'current-month', String(specs[0]?.window));
+  check(
+    '非法 window 被忽略（不是抛错）',
+    mod.parseSectionsYaml('sections:\n  - name: x\n    file: a.md\n    window: nonsense\n')[0]?.window === undefined,
+  );
+
+  const cur = [
+    '<!-- 这个月在推进的事 -->',
+    '',
+    '## 2026-08',
+    '',
+    '八月的事。',
+    '',
+    '## 2026-09-17 起：九月的事',
+    '',
+    '九月的事。',
+    '',
+  ].join('\n');
+  const arc = '<!-- 往月归档 -->\n\n## 2026-07\n\n七月的事。\n';
+  const r = mod.rolloverMonths(cur, arc, new Date(2026, 8, 18)); // 2026-09
+
+  check('八月被滚走、九月留下', r.current.includes('九月的事') && !r.current.includes('八月的事'));
+  check('前言（hint 注释）留在「本月」', r.current.includes('<!-- 这个月在推进的事 -->'));
+  check(
+    '滚出去的块原样进归档（标题不改）',
+    r.archive.includes('## 2026-08') && r.archive.includes('八月的事。'),
+  );
+  check('归档原有内容没被动', r.archive.includes('## 2026-07') && r.archive.includes('七月的事。'));
+  check(
+    'moved 报出月份与标题（供日志用）',
+    r.moved.length === 1 && r.moved[0].month === '2026-08' && r.moved[0].heading === '2026-08',
+    JSON.stringify(r.moved),
+  );
+
+  const r2 = mod.rolloverMonths(r.current, r.archive, new Date(2026, 8, 18));
+  check('再跑一次什么都不做（幂等）', r2.moved.length === 0 && r2.current === r.current && r2.archive === r.archive);
+
+  const noMonth = '## 工程与做事风格\n\n这个没有月份。\n\n## 2026-08\n\n八月。\n';
+  const r3 = mod.rolloverMonths(noMonth, '', new Date(2026, 8, 18));
+  check(
+    '★ 标题不带月份的块一律留下（认不出就不搬，宁可少搬不搬错）',
+    r3.current.includes('工程与做事风格') && !r3.current.includes('八月。'),
+  );
+  check('归档为空时不留下多余空行', !r3.archive.startsWith('\n'), JSON.stringify(r3.archive.slice(0, 12)));
+
+  // 落盘层：读 sections.yaml 认 window → 搬 → 写回
+  const { mkdtempSync: mkRo, mkdirSync: mkdirRo, writeFileSync: wrRo, readFileSync: rdRo, rmSync: rmRo } =
+    await import('node:fs');
+  const roHome = mkdtempSync(join(tmpdir(), 'dsh-mem-roll-'));
+  const roSpace = join(roHome, 'spaces', 'chat');
+  mkdirRo(join(roSpace, 'sections'), { recursive: true });
+  wrRo(
+    join(roSpace, 'sections.yaml'),
+    [
+      'space: chat',
+      'sections:',
+      '  - name: 本月',
+      '    file: sections/this-month.md',
+      '    resident: true',
+      '    order: 10',
+      '    window: current-month',
+      '  - name: 早期月份',
+      '    file: sections/earlier-months.md',
+      '    resident: true',
+      '    order: 20',
+      '    window: month-archive',
+    ].join('\n'),
+    'utf8',
+  );
+  wrRo(join(roSpace, 'sections', 'this-month.md'), '## 2026-08\n\n八月。\n', 'utf8');
+  wrRo(join(roSpace, 'sections', 'earlier-months.md'), '<!-- hint -->\n', 'utf8');
+
+  const res = mod.rolloverMonthSections(roSpace, new Date(2026, 8, 18));
+  check('落盘：报告搬动', res.length === 1 && res[0].moved.length === 1, JSON.stringify(res));
+  check('落盘：「本月」里没有八月了', !rdRo(join(roSpace, 'sections', 'this-month.md'), 'utf8').includes('八月。'));
+  check('落盘：「早期月份」里有八月了', rdRo(join(roSpace, 'sections', 'earlier-months.md'), 'utf8').includes('八月。'));
+  check('落盘：再跑一次无事发生（幂等）', mod.rolloverMonthSections(roSpace, new Date(2026, 8, 18)).length === 0);
+  check(
+    '没声明 window 的 vault 一律不动',
+    mod.rolloverMonthSections(join(roHome, 'spaces', 'nope'), new Date(2026, 8, 18)).length === 0,
+  );
+  rmRo(roHome, { recursive: true, force: true });
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {
