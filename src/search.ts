@@ -12,6 +12,7 @@
  * 该调的权重拿数据说话，而不是凭感觉先调一轮。
  */
 import type { IndexedEntry } from './index-db.js';
+import { localDate } from './markdown.js';
 
 const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/;
 const WORD_RE = /[a-z0-9_]/;
@@ -157,7 +158,11 @@ export function renderHits(hits: readonly SearchHit[]): string {
     .map((h, i) => {
       const e = h.entry;
       const kind = e.kind === 'entity' ? `实体/${e.name ?? ''}` : e.kind;
-      return `${i + 1}. [${labelOf(e)}] ${kind} · ${e.rel}（${h.score.toFixed(2)}）\n   ${h.snippet}`;
+      // 日期 = **这个文件最后被改动的日子**（精确到日）。模型据此判断这条记忆有多旧、
+      // 要不要再确认一遍；后续的遗忘 / 衰减也以它为准。
+      // 取不到就明说"日期未知"，而不是印一个 1970 出来。
+      const date = Number.isFinite(e.mtime) && e.mtime > 0 ? localDate(new Date(e.mtime)) : '日期未知';
+      return `${i + 1}. [${labelOf(e)}] ${kind} · ${e.rel}（${date} · ${h.score.toFixed(2)}）\n   ${h.snippet}`;
     })
     .join('\n');
 }

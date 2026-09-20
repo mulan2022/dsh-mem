@@ -2424,6 +2424,45 @@ console.log('\n=== 8o. 跨月归档由代码做（agent 只管标题格式）===
   rmRo(roHome, { recursive: true, force: true });
 }
 
+console.log('\n=== 8p. 索引 mtime = 文件真实修改时间（检索面靠它显示日期）===');
+{
+  // ★ 这里曾经把 mtime 写成 `Date.now()`（= **这次重建的时间**），于是每条记忆的
+  //   日期都显示成"今天"，拿它判断新旧完全没用 —— 而检索面正要靠它。
+  const {
+    mkdtempSync: mkT2,
+    mkdirSync: mkM,
+    writeFileSync: wrM,
+    utimesSync,
+    rmSync: rmM,
+  } = await import('node:fs');
+  const mtHome = mkT2(join(tmpdir(), 'dsh-mem-mt-'));
+  const mtSpace = join(mtHome, 'spaces', 'chat');
+  mkM(join(mtSpace, 'sections'), { recursive: true });
+  const mtFile = join(mtSpace, 'sections', 'old.md');
+  wrM(mtFile, '# 旧事\n\n很久以前发生的事。\n', 'utf8');
+  const stamp = new Date(2026, 2, 4, 12, 0, 0); // 本地时间 2026-03-04 中午
+  utimesSync(mtFile, stamp, stamp);
+  const expectDay = mod.localDate(stamp);
+
+  const mtDb = mod.openIndex(join(mtHome, 'index.db'));
+  mod.rebuildVault(mtDb, mtSpace, 'chat', null);
+  const mtEnt = mod.listEntries(mtDb).find((e) => e.rel === 'sections/old.md');
+  check(
+    '★ mtime 取自文件本身，不是"这次重建的时间"',
+    mtEnt !== undefined && mod.localDate(new Date(mtEnt.mtime)) === expectDay,
+    mtEnt ? mod.localDate(new Date(mtEnt.mtime)) : '(没索引到)',
+  );
+
+  const rendered = mod.renderHits(mod.searchEntries(mtEnt ? [mtEnt] : [], '很久以前'));
+  check('mem_search 的结果里带上日期', rendered.includes(expectDay), rendered.split('\n')[0]);
+  check(
+    'mtime 取不到时写「日期未知」，而不是印个 1970',
+    mod.renderHits([{ entry: { ...mtEnt, mtime: 0 }, score: 0.5, snippet: 'x' }]).includes('日期未知'),
+  );
+  mod.closeIndex(mtDb);
+  rmM(mtHome, { recursive: true, force: true });
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {

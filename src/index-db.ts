@@ -5,10 +5,10 @@
  * 每个 vault 目录的 mtime 变化会在下次重建时增量或全量刷新对应条目。
  */
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { dirname, basename } from 'node:path';
 import { dedupeTurns, readTurnFile, turnFiles } from './turns.js';
-import { readVaultFile, walkMarkdown } from './vault.js';
+import { readVaultFile, resolveInsideVault, walkMarkdown } from './vault.js';
 
 export interface IndexedEntry {
   /** 全局唯一键：`space:project:rel`（见 `entryKey`）。 */
@@ -21,6 +21,12 @@ export interface IndexedEntry {
   name: string | null;
   status: string | null;
   body: string;
+  /**
+   * **文件真的 mtime**（毫秒）—— 不是"这次重建的时间"。
+   *
+   * ⚠️ 这里曾经写成 `Date.now()`，于是每条记忆的日期都显示成"今天"，
+   * 拿它判断新旧完全没用（而检索面正要靠它显示日期）。现在从 `statSync` 取。
+   */
   mtime: number;
 }
 
@@ -242,7 +248,18 @@ export function rebuildVault(
     // 实体页/分区页的 name 是"精确命中入口"，所以优先取 front-matter 的 name，
     // 否则退回文件名（去掉 .md）
     const name = attrs.name ?? basename(rel).replace(/\.md$/, '');
-    upsert.run(entryKey(space, project, rel), rel, space, project, kind, name, attrs.status ?? null, body, now, now);
+    // **文件真的 mtime**，不是这次重建的时间 —— 检索面要靠它显示"这条记忆多旧"。
+    // 取不到就退回 now（宁可显示今天，也不要因为一次 stat 失败就没有日期）。
+    let mtime = now;
+    const abs = resolveInsideVault(vaultDir, rel);
+    if (abs !== null) {
+      try {
+        mtime = Math.floor(statSync(abs).mtimeMs);
+      } catch {
+        /* 文件刚被删 / 权限问题：退回 now */
+      }
+    }
+    upsert.run(entryKey(space, project, rel), rel, space, project, kind, name, attrs.status ?? null, body, mtime, mtime);
     seen.add(rel);
     indexed++;
   }
