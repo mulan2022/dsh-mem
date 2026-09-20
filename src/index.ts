@@ -250,6 +250,7 @@ export {
 } from './vault-api.js';
 export { registerVaultRoutes, resolveSpaceDir } from './routes.js';
 export { buildExtractPrompt, buildMergePrompt } from './dream-run.js';
+export { attachmentObjectPath } from './paths.js';
 export { parseSectionsYaml, rolloverMonths, type MonthRolloverResult } from './sections.js';
 export { identityPath, normalizeWorkspacePath, projectEntryDir, projectKey } from './paths.js';
 export { MAX_INSTRUCTIONS, addInstruction, readInstructions, removeInstruction } from './instructions.js';
@@ -414,6 +415,7 @@ export {
   type ValidateReport,
 } from './dream-json.js';
 export {
+  attachmentsOfUserMessage,
   currentTurnOf,
   isSubagentSession,
   sessionCwdOf,

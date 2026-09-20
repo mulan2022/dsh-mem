@@ -385,6 +385,7 @@ export function backfillRawTurns(home: string): BackfillReport {
           cwd: log.cwd,
           space,
           at: typeof startTime === 'number' ? new Date(startTime) : new Date(),
+          home,
         });
         if (rec === null) continue;
         if (rec.turn !== null && have.has(rec.turn)) continue; // 只补缺

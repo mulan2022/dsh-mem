@@ -2463,6 +2463,87 @@ console.log('\n=== 8p. 索引 mtime = 文件真实修改时间（检索面靠它
   rmM(mtHome, { recursive: true, force: true });
 }
 
+console.log('\n=== 8q. 附件：采集元数据 + 指向原件（不搬字节）===');
+{
+  // ★ 在此之前 `textOfUserMessage` 只挑 text 块，image/file 被静默丢掉 ——
+  //   于是"用户发过一张图"在 raw/turns 里连痕迹都没有，dream 无从判断它重不重要。
+  const sha = `sha256:${'ab'.repeat(32)}`;
+  const att = () => ({
+    type: 'image',
+    attachment: { attachmentId: sha, mediaType: 'image/png', name: 'a.png', bytes: 123, width: 10, height: 20 },
+  });
+  const msg = (content) => ({ type: 'user/message', data: { source: { kind: 'user' }, content } });
+
+  const refs = mod.attachmentsOfUserMessage({
+    source: { kind: 'user' },
+    content: [
+      { type: 'text', text: '看这个' },
+      att(),
+      { type: 'image' },
+      { type: 'image', attachment: { mediaType: 'image/png' } },
+    ],
+  });
+  check('取出附件元数据', refs.length === 1 && refs[0].id === sha && refs[0].kind === 'image', JSON.stringify(refs));
+  check('缺 attachmentId 的块被跳过', refs.length === 1);
+  check(
+    '元数据齐全（mediaType / name / bytes / 尺寸）',
+    refs[0].mediaType === 'image/png' && refs[0].name === 'a.png' && refs[0].bytes === 123 && refs[0].width === 10,
+  );
+  check('没有 content 不抛错', mod.attachmentsOfUserMessage(undefined).length === 0);
+
+  check(
+    '附件路径 = <home>/attachments/v1/objects/<前2位>/<sha>',
+    mod.attachmentObjectPath('/h', sha) === join('/h', 'attachments', 'v1', 'objects', 'ab', 'ab'.repeat(32)),
+    String(mod.attachmentObjectPath('/h', sha)),
+  );
+  check('非 sha256 前缀 → null（不猜路径）', mod.attachmentObjectPath('/h', 'md5:abc') === null);
+  check('长度不对 → null', mod.attachmentObjectPath('/h', 'sha256:abcd') === null);
+
+  const t1 = mod.collectTurn(
+    [{ type: 'turn/start', data: { turn: 7 } }, msg([{ type: 'text', text: '看看' }, att()])],
+    { session: 's', cwd: null, space: 'chat', home: '/h' },
+  );
+  check('轮次记录里带上 files', Array.isArray(t1?.files) && t1.files.length === 1, JSON.stringify(t1?.files));
+  check('files 里带原件路径', (t1?.files?.[0]?.path ?? '').includes('objects'), String(t1?.files?.[0]?.path));
+
+  const t2 = mod.collectTurn(
+    [{ type: 'turn/start', data: { turn: 8 } }, msg([{ type: 'text', text: '没附件' }])],
+    { session: 's', cwd: null, space: 'chat', home: '/h' },
+  );
+  check(
+    '没有附件时不写 files 字段（jsonl 保持干净）',
+    t2 !== null && !('files' in t2),
+    JSON.stringify(Object.keys(t2 ?? {})),
+  );
+
+  const t3 = mod.collectTurn([{ type: 'turn/start', data: { turn: 9 } }, msg([att()])], {
+    session: 's',
+    cwd: null,
+    space: 'chat',
+    home: '/h',
+  });
+  check(
+    '★ 只发一张图、一句话没说 —— 这轮也要记（以前会被整轮丢掉）',
+    t3 !== null && t3.user === '' && t3.files?.length === 1,
+    JSON.stringify(t3),
+  );
+
+  const t4 = mod.collectTurn([{ type: 'turn/start', data: { turn: 10 } }, msg([att(), att()])], {
+    session: 's',
+    cwd: null,
+    space: 'chat',
+    home: '/h',
+  });
+  check('同一张图发两次只记一条', t4?.files?.length === 1, String(t4?.files?.length));
+
+  const t5 = mod.collectTurn([{ type: 'turn/start', data: { turn: 11 } }, msg([att()])], {
+    session: 's',
+    cwd: null,
+    space: 'chat',
+  });
+  check('没给 home 时 path 为 null（宁可不给，也不猜错）', t5?.files?.[0]?.path === null);
+}
+
 console.log('\n=== 9. 卸载路径（effect disposer）===');
 check('apply 注册了 effect', effects.length > 0, `${effects.length} 个`);
 for (const d of effects) {

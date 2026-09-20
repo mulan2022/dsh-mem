@@ -72,7 +72,19 @@ export interface EventLike {
   data?: {
     turn?: number;
     source?: { kind?: string; plugin?: string };
-    content?: Array<{ type?: string; text?: string }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      /** 附件块（image / file）带的是这个 —— 见 `attachmentsOfUserMessage`。 */
+      attachment?: {
+        attachmentId?: string;
+        mediaType?: string;
+        name?: string;
+        bytes?: number;
+        width?: number;
+        height?: number;
+      };
+    }>;
     message?: { content?: Array<{ type?: string; name?: string; text?: string }> };
     reason?: { kind?: string };
   };
@@ -97,4 +109,47 @@ export function textOfUserMessage(data: EventLike['data']): string {
     .filter((b) => b?.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text ?? '')
     .join('\n');
+}
+
+/** 一条附件的元数据。**字节不在这里** —— 在 DSH 的附件库里，按 id 寻址。 */
+export interface TurnAttachment {
+  /** `image` 还是别的文件。 */
+  kind: 'image' | 'file';
+  /** 内容寻址 id：`sha256:<64 位 hex>`。 */
+  id: string;
+  mediaType: string | null;
+  name: string | null;
+  bytes: number | null;
+  width: number | null;
+  height: number | null;
+}
+
+/**
+ * 取出一条用户消息里的附件元数据。
+ *
+ * ⚠️ **这是附件唯一会进我们库的入口。** 在它之前只有 `textOfUserMessage`，
+ * 而那个函数只挑 `type === 'text'` 的块 —— image / file 块被**静默丢掉**，
+ * 于是"用户发过一张图"这件事在 `raw/turns` 里连痕迹都没有（实测：本会话发过图的
+ * 那些轮次，全文搜 attachment / png / image 一处都没有），dream 也就无从判断
+ * 它重不重要。
+ *
+ * 只记元数据、不搬字节：字节在附件库里按内容寻址，**指向原件就够了**。
+ */
+export function attachmentsOfUserMessage(data: EventLike['data']): TurnAttachment[] {
+  const out: TurnAttachment[] = [];
+  for (const b of data?.content ?? []) {
+    if (b?.type !== 'image' && b?.type !== 'file') continue;
+    const a = b.attachment;
+    if (a === undefined || a === null || typeof a.attachmentId !== 'string') continue;
+    out.push({
+      kind: b.type,
+      id: a.attachmentId,
+      mediaType: typeof a.mediaType === 'string' ? a.mediaType : null,
+      name: typeof a.name === 'string' ? a.name : null,
+      bytes: typeof a.bytes === 'number' ? a.bytes : null,
+      width: typeof a.width === 'number' ? a.width : null,
+      height: typeof a.height === 'number' ? a.height : null,
+    });
+  }
+  return out;
 }

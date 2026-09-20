@@ -14,8 +14,18 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { turnsDir } from './paths.js';
-import { asEvents, isSubagentSession, lastTurnStartIndex, sessionEventsOf, sessionIdOf, textOfUserMessage, type EventLike } from './session.js';
+import { attachmentObjectPath, turnsDir } from './paths.js';
+import {
+  asEvents,
+  attachmentsOfUserMessage,
+  isSubagentSession,
+  lastTurnStartIndex,
+  sessionEventsOf,
+  sessionIdOf,
+  textOfUserMessage,
+  type EventLike,
+  type TurnAttachment,
+} from './session.js';
 
 export const TURNS_DIR = 'turns';
 
@@ -41,6 +51,22 @@ export interface TurnRecord {
   assistant: string;
   /** 本轮调用的工具名（只记名字，改动细节在 raw/timeline/ 里）。 */
   tools: string[];
+  /**
+   * 用户这一轮**发过来的附件**（图片 / 文件）—— 只记元数据 + 一个指向原件的路径。
+   *
+   * **字节不在库里**：DSH 的附件库按内容寻址（`<home>/attachments/v1/objects/<sha>`），
+   * 这里只留指针。dream 据此判断它重不重要；要留就在实体页的附录里写这条路径，
+   * 以后 `mem_search` 命中实体页就能顺着路径去读原件。
+   *
+   * 没有附件时**不写这个字段**（保持 jsonl 干净）。
+   */
+  files?: TurnFile[];
+}
+
+/** 一条附件：元数据 + 解出来的原件路径（解不出为 null）。 */
+export interface TurnFile extends TurnAttachment {
+  /** 附件库里的绝对路径；`attachmentId` 认不出时为 null。 */
+  path: string | null;
 }
 
 function clamp(s: string, max = TURN_TEXT_MAX): string {
@@ -55,7 +81,7 @@ function clamp(s: string, max = TURN_TEXT_MAX): string {
  */
 export function collectTurn(
   events: readonly EventLike[],
-  opts: { session: string; cwd: string | null; space: 'chat' | 'project'; at?: Date },
+  opts: { session: string; cwd: string | null; space: 'chat' | 'project'; at?: Date; home?: string },
 ): TurnRecord | null {
   const start = lastTurnStartIndex(events);
   const from = start < 0 ? 0 : start;
@@ -64,12 +90,24 @@ export function collectTurn(
   const userParts: string[] = [];
   const assistantParts: string[] = [];
   const tools: string[] = [];
+  const files: TurnFile[] = [];
+  const seenFile = new Set<string>();
 
   for (let i = from; i < events.length; i++) {
     const e = events[i];
     if (e?.type === 'user/message') {
-      // 本插件自己插进去的快照/指令不算"用户说的话"
-      if (e.data?.source?.kind === 'user') userParts.push(textOfUserMessage(e.data));
+      // 本插件自己插进去的快照/指令不算"用户说的话"，也不算用户发的附件
+      if (e.data?.source?.kind === 'user') {
+        userParts.push(textOfUserMessage(e.data));
+        for (const a of attachmentsOfUserMessage(e.data)) {
+          if (seenFile.has(a.id)) continue; // 同一张图发两次只记一条
+          seenFile.add(a.id);
+          files.push({
+            ...a,
+            path: opts.home === undefined ? null : attachmentObjectPath(opts.home, a.id),
+          });
+        }
+      }
       continue;
     }
     if (e?.type === 'assistant/message') {
@@ -82,7 +120,8 @@ export function collectTurn(
 
   const user = clamp(userParts.join('\n'));
   const assistant = clamp(assistantParts.join('\n'));
-  if (user === '' && assistant === '' && tools.length === 0) return null;
+  // 只发了一张图、一句话没说 —— 这轮**仍然要记**（附件本身就是这一轮的全部内容）
+  if (user === '' && assistant === '' && tools.length === 0 && files.length === 0) return null;
 
   return {
     session: opts.session,
@@ -93,6 +132,7 @@ export function collectTurn(
     user,
     assistant,
     tools,
+    ...(files.length > 0 ? { files } : {}),
   };
 }
 
@@ -252,7 +292,7 @@ export function installTurnCapture(ctx: TurnCaptureCtx, input: TurnCaptureInput)
       // `space` 只记"当时按 cwd 判成了什么" —— 它是**线索不是结论**。
       // 真正的归属由 dream 的两个 agent 按内容判断（项目目录里的闲聊该进聊天区）。
       const space: 'chat' | 'project' = cwd === null ? 'chat' : 'project';
-      const rec = collectTurn(events, { session: sid, cwd, space });
+      const rec = collectTurn(events, { session: sid, cwd, space, home: input.home });
       if (rec === null) return;
       if (!appendTurn(input.home, rec)) {
         ctx.logger.warn('dsh-mem: 原始轮次写入失败（不影响本轮）');

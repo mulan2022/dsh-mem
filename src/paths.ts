@@ -169,6 +169,24 @@ export function historyStatePath(home: string): string {
 }
 
 /**
+ * DSH 附件库里某个对象的位置：`<dsh home>/attachments/v1/objects/<sha 前 2 位>/<sha>`。
+ *
+ * 内容寻址 —— 同一个文件永远同一个路径，指针不会因为"又发了一次"而漂移。
+ *
+ * ⚠️ **这只是"指向原件"，不是"我们保管了它"**：附件库不归我们管，上游在
+ * `dsh-attachment` 里明说将来会有 retention policy（现在还没有，实测对象一个没少）。
+ * 到那天如果它按"DSH 会话是否引用"判可达，我们的 vault 不在它的视野里 ——
+ * 这是"不复制字节"这条路要接受的代价。
+ *
+ * 认不出 `sha256:` 前缀、或长度不对，就返回 null（宁可没有路径，也不要猜错路径）。
+ */
+export function attachmentObjectPath(home: string, id: string): string | null {
+  const sha = id.startsWith('sha256:') ? id.slice('sha256:'.length) : '';
+  if (!/^[0-9a-f]{64}$/i.test(sha)) return null;
+  return join(home, 'attachments', 'v1', 'objects', sha.slice(0, 2), sha);
+}
+
+/**
  * 规范化工作区路径：统一为正斜杠，**保留盘符大小写**（人类可读）。
  *
  * ⚠️ 这是**显示**用的形态。要拿路径当身份（分区 key、登记表键），用下面的
