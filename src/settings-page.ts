@@ -22,7 +22,6 @@ const SECTION_ID = 'dsh-mem';
 const CSS = `
 .dshmem_page{color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:10px;max-width:860px;padding:4px 0}
 .dshmem_title{font-size:14px;font-weight:600;margin:0}
-.dshmem_sub{color:var(--dsw-alias-label-caption);font-size:11.5px;line-height:1.6;margin:0}
 .dshmem_bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dshmem_tab{background:transparent;border:1px solid var(--dsw-alias-border-l3);border-radius:6px;color:var(--dsw-alias-label-secondary);cursor:pointer;font-size:11.5px;padding:3px 9px}
 .dshmem_tab:hover{border-color:var(--dsw-alias-border-l2);color:inherit}
@@ -459,12 +458,6 @@ export function MemorySpaceSection(): React.ReactElement {
     'div',
     { className: 'dshmem_page' },
     el('h2', { className: 'dshmem_title' }, '记忆空间'),
-    el(
-      'p',
-      { className: 'dshmem_sub' },
-      '基于 markdown vault 的跨会话记忆。文件是唯一事实源，可直接用编辑器修改；' +
-        'index.db 只是可随时重建的派生索引。',
-    ),
     err !== null ? el('p', { className: 'dshmem_err' }, err) : null,
     overview
       ? el(

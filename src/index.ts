@@ -97,8 +97,14 @@ export const Config = z.object({
   projectRootMarkers: z.array(z.string()).default(['.git']),
   /** 注入与工具文案语言（P2 起生效）。 */
   promptLang: z.string().default('zh'),
-  /** 单次记忆注入的字符预算（超出截断）。 */
-  injectMaxChars: z.number().min(0).default(2000),
+  /**
+   * 单次记忆注入的字符预算（超出截断）。
+   *
+   * 8000 是按**随包发布的聊天模板**定的：六个常驻 section（个人背景 / 工作背景 /
+   * 本月 / 早期月份 / 品味与偏好 / 记忆提示）填满后约 5000 字，留一半余量给常驻记忆
+   * 与实体目录。默认若还是 2000，新装的人一上来就会被截掉一半。
+   */
+  injectMaxChars: z.number().min(0).default(8000),
   /** 单次实体命中的字符预算（超出截断）。 */
   entityMaxChars: z.number().min(0).default(3000),
   /** 「用户明说记住」时的提醒（P4）。关掉就不再 steer 反思消息。 */
@@ -175,7 +181,7 @@ export function resolveConfig(raw: unknown): ResolvedMemConfig {
     injectMaxChars:
       typeof o.injectMaxChars === 'number' && Number.isFinite(o.injectMaxChars) && o.injectMaxChars >= 0
         ? o.injectMaxChars
-        : 2000,
+        : 8000,
     entityMaxChars:
       typeof o.entityMaxChars === 'number' && Number.isFinite(o.entityMaxChars) && o.entityMaxChars >= 0
         ? o.entityMaxChars
