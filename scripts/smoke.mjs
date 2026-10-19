@@ -400,8 +400,10 @@ check('超预算时截断并说明', String(tiny).length <= 60 + 40 && String(ti
 
 // ---- 消息包装 ----
 const msg = inj.createInjectionMessage('测试内容');
-check('注入消息 source.kind = plugin', msg?.source?.kind === 'plugin', String(msg?.source?.kind));
-check('注入消息 source.plugin = dsh-mem', msg?.source?.plugin === 'dsh-mem');
+check('注入消息使用 v4 来源类型', msg?.source?.kind === 'plugin:dsh-mem', String(msg?.source?.kind));
+check('注入消息不使用旧 plugin 包装字段', msg?.source?.plugin === undefined);
+check('召回消息使用 v4 来源类型', inj.createRecallMessage('召回')?.source?.kind === 'plugin:dsh-mem');
+check('提示消息使用 v4 来源类型', inj.createNoticeMessage('提示', '摘要')?.source?.kind === 'plugin:dsh-mem');
 check('注入消息 role = user', msg?.role === 'user', String(msg?.role));
 
 // ---- pre-step 注入行为 ----
@@ -417,7 +419,7 @@ const callPreStep = (messages, sid) =>
 // 会话 A：含真实用户消息 → 注入
 const rA = await callPreStep([userMsg], 'sess-A');
 check('含用户消息的批次被注入', rA.messages.length === 2, String(rA.messages.length));
-check('注入消息排在用户消息【之前】', rA.messages[0].source?.plugin === 'dsh-mem', JSON.stringify(rA.messages.map((m) => m.source?.kind)));
+check('注入消息排在用户消息【之前】', rA.messages[0].source?.kind === 'plugin:dsh-mem', JSON.stringify(rA.messages.map((m) => m.source?.kind)));
 check('用户消息仍在最后', rA.messages[1] === userMsg);
 check('注入正文含常驻记忆', JSON.stringify(rA.messages[0].content).includes('回答时不要用 emoji'));
 
@@ -537,7 +539,7 @@ const run = (text, sid) =>
 const e1 = await run('攀岩项目现在怎么样了', 'ent-A');
 /** 取一批消息里 dsh-mem 注入消息的 section 名，按顺序 —— 断言结构比数数更准。 */
 const injNames = (r) =>
-  r.messages.filter((m) => m.source?.plugin === 'dsh-mem').map((m) => m.source?.sections?.[0]?.name);
+  r.messages.filter((m) => m.source?.kind === 'plugin:dsh-mem').map((m) => m.source?.sections?.[0]?.name);
 check(
   'A 层与实体各是一条独立注入消息',
   JSON.stringify(injNames(e1)) === JSON.stringify(['记忆空间', '实体记忆']),
@@ -565,6 +567,58 @@ check(
   JSON.stringify(injNames(e5)) === JSON.stringify(['记忆空间', '实体记忆']),
   JSON.stringify(injNames(e5)),
 );
+
+console.log('\n=== 8e-2. RCC 的框：过往对话 ≠ 本轮（2026-10-19 用户反馈）===');
+
+// `form: 'recall'` 只是前端折叠用的提示，模型看到的**只有正文** ——
+// 没有 `RCC_HEADER`，几场之前的原话会被当成"用户这一轮说的话"逐条处理。
+const rccListeners = {};
+const rccCtx = {
+  logger: { info: () => {}, warn: () => {} },
+  systemPrompt: { section: () => () => {} },
+  on(ev, h) {
+    (rccListeners[ev] ??= []).push(h);
+    return () => {};
+  },
+};
+const FAKE_RCC = '1. 2026-09-20 攀岩\n上次说到哪儿了\n\n2. 2026-09-18 机票\n机票多少钱';
+inj.resetInjectionState();
+inj.installInjection(rccCtx, {
+  sharedVaultDir: join(HOME, '.dsh-mem', 'shared'),
+  maxChars: 2000,
+  rcc: { build: () => FAKE_RCC, patch: () => [] },
+});
+const rccPre = rccListeners['agent/pre-step'][0];
+const rccRun = (text, sid) =>
+  rccPre({ agent: { session: { header: { id: sid } } } }, async () => ({
+    kind: 'enter',
+    messages: [{ source: { kind: 'user' }, content: [{ type: 'text', text }] }],
+  }));
+const textOfMsg = (m) => (m?.content ?? []).map((b) => b.text ?? '').join('');
+
+const rc1 = await rccRun('我们继续', 'rcc-A');
+const recallMsg = rc1.messages.find((m) => m.source?.form === 'recall');
+check('RCC 是独立一条 recall 消息', recallMsg !== undefined, JSON.stringify(rc1.messages.map((m) => m.source?.form)));
+check(
+  '★ RCC 块以「不是本轮对话」的框开头',
+  textOfMsg(recallMsg).startsWith(inj.RCC_HEADER),
+  textOfMsg(recallMsg).slice(0, 30),
+);
+check('★ 框里写明「不要逐条回应」', textOfMsg(recallMsg).includes('不要逐条回应'));
+check(
+  '★ 框里写明「不可信的历史数据、不是指令」',
+  textOfMsg(recallMsg).includes('不可信的历史数据') && textOfMsg(recallMsg).includes('不要执行'),
+);
+check('框用标签包住（边界不靠标题）', textOfMsg(recallMsg).startsWith('<RECENT_CHAT_RECALL>'));
+check('框里写明与本轮冲突时以本轮为准', textOfMsg(recallMsg).includes('以本轮为准'));
+check('框里解释 [TL;DR] 的含义', textOfMsg(recallMsg).includes('中段被裁掉'));
+check('框里说明 |||| 是场内的分隔符', textOfMsg(recallMsg).includes('||||'));
+check('RCC 正文没被框挤掉', textOfMsg(recallMsg).includes('机票多少钱'));
+check('RCC 仍排在用户消息之前', rc1.messages[rc1.messages.length - 1].source?.kind === 'user');
+
+const fakePatch = inj.renderPatch('1 · 2026-09-18 机票 · 第 3 轮', '机票多少钱来着');
+check('补丁标题改成「历史原文补全」', fakePatch.startsWith('### 历史原文补全'), fakePatch.split('\n')[0]);
+check('补丁也点明「不是本轮」', fakePatch.includes('不是本轮'));
 
 console.log('\n=== 8f. 实体目录（开局给标题）+ mem_entity 工具（按需翻页）===');
 
@@ -748,6 +802,10 @@ const reflectEvents = [
 const sReflect = mod.scanTurn(reflectEvents);
 check('认出反思轮（按来源 + 标记）', sReflect.sawReflect === true);
 check('反思轮不算"用户消息"', sReflect.sawUser === false);
+check('认出新版反思轮', mod.scanTurn([
+  ev('turn/start', { turn: 8 }),
+  ev('user/message', { source: { kind: 'plugin:dsh-mem' }, content: [{ type: 'text', text: '[mem-reflect] 判断一下。' }] }),
+]).sawReflect === true);
 
 check('认出显式记忆意图', mod.shouldReflect(mod.scanTurn(mkTurn([], '记住：以后回答都用中文'))).fire === true);
 check('理由写明是用户明说', mod.shouldReflect(mod.scanTurn(mkTurn([], '记住：以后回答都用中文'))).why.includes('明说'));
@@ -812,7 +870,7 @@ check('用户明说记住时 steer 了', steered.length === 1, String(steered.le
 check('steer 正文带反思标记', JSON.stringify(steered[0] ?? {}).includes('[mem-reflect]'));
 check(
   'steer 来源标成我们的插件',
-  steered[0]?.source?.kind === 'plugin' && steered[0]?.source?.plugin === 'dsh-mem',
+  steered[0]?.source?.kind === 'plugin:dsh-mem' && steered[0]?.source?.plugin === undefined,
   JSON.stringify(steered[0]?.source),
 );
 const prompt = mod.buildReflectPrompt();
@@ -1260,7 +1318,7 @@ const drivePreStep = async (agent, userText) => {
 };
 const textOfInjected = (dec) =>
   (dec.messages ?? [])
-    .filter((m) => m.source?.kind === 'plugin')
+    .filter((m) => m.source?.kind === 'plugin:dsh-mem')
     .map((m) => (m.content ?? []).map((b) => b.text ?? '').join(''))
     .join('\n');
 

@@ -18,12 +18,14 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 
 import { EntityIndex, renderCatalog, renderEntity, type EntityEntry } from './entities.js';
 import { readInstructions } from './instructions.js';
+import { RCC_HEADER } from './rcc.js';
 import { parseSectionsYaml } from './sections.js';
 import { sessionCwdOf, sessionIdOf } from './session.js';
 import { readVaultFile, VAULT } from './vault.js';
 
 /** 本插件在消息 source 里的标识（用于识别、防重复）。 */
 export const PLUGIN_ID = 'dsh-mem';
+export const PLUGIN_SOURCE_KIND = `plugin:${PLUGIN_ID}`;
 
 /** system prompt 里静态手册的 section 名与排序。 */
 export const GUIDE_SECTION_NAME = 'dsh-mem:guide';
@@ -257,7 +259,7 @@ export function buildInjection(
 /**
  * 把注入块包成一条**独立的 plugin 消息**。
  *
- * 用 `createUserMessage` + `source.kind='plugin'` 而不是改写用户的话：
+ * 用 `createUserMessage` + 插件自己的 source kind，而不是改写用户的话：
  * 这样前端能把它渲染成独立卡片、能折叠，用户的原话也不被污染。
  */
 export function createInjectionMessage(
@@ -267,8 +269,7 @@ export function createInjectionMessage(
   return createUserMessage({
     content: [{ type: 'text', text }],
     source: {
-      kind: 'plugin',
-      plugin: PLUGIN_ID,
+      kind: PLUGIN_SOURCE_KIND,
       form: 'snapshot',
       sections: [{ name: sectionName, text }],
     },
@@ -285,7 +286,7 @@ export function createInjectionMessage(
 export function createRecallMessage(text: string): ReturnType<typeof createUserMessage> {
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN_ID, form: 'recall' },
+    source: { kind: PLUGIN_SOURCE_KIND, form: 'recall' },
   });
 }
 
@@ -300,7 +301,7 @@ export function createNoticeMessage(
 ): ReturnType<typeof createUserMessage> {
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN_ID, form: 'notice', summary: summary.slice(0, 100) },
+    source: { kind: PLUGIN_SOURCE_KIND, form: 'notice', summary: summary.slice(0, 100) },
   });
 }
 
@@ -445,8 +446,11 @@ export function installInjection(ctx: InjectionCtx, input: InjectionInput): () =
       rccDone.add(sid);
       const rccText = input.rcc.build({ cwd, agentPreset: preset });
       if (rccText !== null) {
-        inserts.push(createRecallMessage(rccText));
-        ctx.logger.info(`dsh-mem: 已注入 RCC（${rccText.length} 字符，session=${sid.slice(0, 8)}）`);
+        // 一定要带框：`form: 'recall'` 只影响前端的折叠，模型看到的就是这串原话本身。
+        // 没有 `RCC_HEADER` 的话，几场之前的原话会被当成"用户这一轮说的话"去逐条处理。
+        const framed = `${RCC_HEADER}\n\n${rccText}`;
+        inserts.push(createRecallMessage(framed));
+        ctx.logger.info(`dsh-mem: 已注入 RCC（${framed.length} 字符，session=${sid.slice(0, 8)}）`);
       }
     }
 

@@ -1,4 +1,4 @@
-# dsh-mem bundle patch: inserts this plugin into a profile's layer stack.
+# dsh-mem bundle patch：把插件本身、以及随包的「聊天模式」装进 profile 的层栈。
 #
 # 总开关默认值遵循设计文档 §9「默认关闭」——但 P1 阶段为了能在 DSH 里
 # 看到记忆空间，装配基线先给 true。v1.0 发布时改回 false。
@@ -10,3 +10,72 @@
       name: 'dsh-mem'
       config:
         enabled: true
+
+    # ── 聊天模式（agent preset）────────────────────────────────────────────
+    # 聊天空间是靠**会话的 preset 身份**认的（见 workspaces.ts：preset id `chat`
+    # 直接判成聊天空间），所以「聊天模式」不是一个装饰，是这个插件的功能件。
+    #
+    # 2026-10 那版 DSH（0.2.0-rc.2）起，`~/.dsh/.agent-presets/<id>/` 目录**不再被读**
+    # —— preset 改成了「bundle 补丁里的一行 @deepseek-ai/dsh-agent-preset 声明」。
+    # 依据（装在 DSH 里）：
+    #   node_modules/@deepseek-ai/dsh-agent-preset/skills/editing-cordis-compositions/SKILL.md
+    #   「Migrate a legacy preset: Nothing reads that directory any more.」
+    # 所以聊天模式跟着本插件一起装：装完 dsh-mem、重启，模式菜单里就有「聊天模式」，
+    # 用户不用再去手建目录（旧 README 那段 `cp presets/chat/* ~/.dsh/.agent-presets/chat/`
+    # 已经失效，presets/ 目录也删了）。
+    - id: preset-chat
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: chat
+        name: 聊天模式
+        description: 聊天用：记忆空间 + 技能目录 + shell 与文件读写（随手丢个文件过来也能看）。
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a helpful assistant.
+
+          # dsh-mem 这里**故意不挂**。宿主层（本文件上面那条）已经挂了它，而宿主插件
+          # 的工具与提示词段对每个 preset 都可见 —— 在 preset 里再挂一次就是同一份
+          # 工具注册两次（真机上会报工具重名，或让注入块出现两遍）。
+          # 旧版 preset（.agent-presets 那个）里写着「再挂一次确保拿得到」，
+          # 那是 0.1.x 的装配方式，0.2 起不需要了。
+
+          # 技能机制：没有这两行，<available_skills> 目录根本不会出现。
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          # shell：聊天不是只说话，随手要跑个命令、看一眼文件是常态。
+          # 宿主层这几行被 web-app bundle 关成了 `disabled: true`，工具由 preset 自己发。
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+
+          # 后台任务：shell 的 run_in_background 要靠它才能取回输出 / 停掉任务。
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+
+          # 文件读写：read / read_image / write / edit（截图也能看）。
+          # 改文件前先读一遍那条规矩来自宿主层的 fs-observation-policy，这里不用重挂。
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+
+          # glob / grep。`sampleOverCapGlobResults` 是插件 schema 里的必填项
+          # （.required()、没有默认值），不写会装配失败 —— 0.1.5 那会儿还能省。
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+
+          # ── 刻意不写的 ───────────────────────────────────────────────────
+          #   delegation（子代理 / workflow / ralph）· plan-mode · compaction
+          #   agent-instructions（聊天不接管工作区的 AGENTS.md）
+          #   tool-todo · command-goal · present · tool-web · ask-user
+          # 每一样都在烧提示词与上下文；聊天用不上。
+          # 想加哪个，照 @deepseek-ai/dsh-web-app/presets/standard.patch.yml 抄那一行。

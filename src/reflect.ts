@@ -16,7 +16,7 @@
  */
 import { createUserMessage, type MessageSource } from '@deepseek-ai/dsh-llm';
 
-import { PLUGIN_ID } from './inject.js';
+import { PLUGIN_ID, PLUGIN_SOURCE_KIND } from './inject.js';
 import {
   asEvents,
   isSubagentSession,
@@ -31,7 +31,7 @@ import { TOOL_FORGET, TOOL_OBSERVE, TOOL_REMEMBER } from './tool-names.js';
 export const REFLECT_MARKER = '[mem-reflect]';
 
 /** 反思消息的来源标记。 */
-export const REFLECT_SOURCE: MessageSource = { kind: 'plugin', plugin: PLUGIN_ID };
+export const REFLECT_SOURCE: MessageSource = { kind: PLUGIN_SOURCE_KIND };
 
 /** 写记忆的工具 —— 本轮的最后一个工具是它们之一，说明模型已经主动记过了。 */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([TOOL_REMEMBER, TOOL_FORGET, TOOL_OBSERVE]);
@@ -95,7 +95,7 @@ export function scanTurn(events: readonly EventLike[]): TurnScan {
     if (e?.type === 'user/message') {
       const src = e.data?.source;
       const text = textOfUserMessage(e.data);
-      if (src?.kind === 'plugin' && src.plugin === PLUGIN_ID && text.includes(REFLECT_MARKER)) {
+      if ((src?.kind === PLUGIN_SOURCE_KIND || (src?.kind === 'plugin' && src.plugin === PLUGIN_ID)) && text.includes(REFLECT_MARKER)) {
         sawReflect = true;
       } else if (src?.kind === 'user') {
         sawUser = true;
