@@ -2041,6 +2041,25 @@ check(
     return r.truncated === false && r.text.split(`\n${mod.RCC_SEP}\n`).length === 20;
   })(),
 );
+// ★ 2026-10-20：长文（转贴提示词/代码/日志）**不原样进 RCC** —— 否则 40 场窗口里"次次带上"。
+check(
+  '★ 超过 600 字的一轮只留一行「长文」标记（开头 40 字用来认出是哪篇）',
+  (() => {
+    const big = `开头甲${'啰'.repeat(700)}结尾乙`;
+    const r = mod.sessionUserText([{ userText: big }]);
+    return (
+      r.text.startsWith(`[长文 ${big.length} 字 · 开头：开头甲`) &&
+      r.text.endsWith('…]') &&
+      !r.text.includes('结尾乙') &&
+      !r.text.includes(mod.RCC_TRUNCATED) &&
+      r.truncated === true
+    );
+  })(),
+);
+check(
+  '长文阈值与补丁素材上限是同一个数（一处调、两处跟）',
+  mod.RCC_LONG_TURN_CHARS === mod.PATCH_MAX_TURN_CHARS,
+);
 check(
   '标题回退成"这一场的第一句"（sessions.title 还没接）',
   mod.sessionTitle({ session: 'x', title: null, startedAt: null, inRcc: false, rccTruncated: false }, rccS3Turns).startsWith('机票价格比较'),
@@ -2152,14 +2171,20 @@ check(
   (() => {
     const c = mod.patchCandidates(rccDb, '中段乙', { k: 1, maxChars: 1000, cut: rccCut });
     const t = c[0]?.text ?? '';
-    const lines = t.split('\n');
     return (
-      lines[lines.length - 1] === '中段乙藏在这里' &&
+      t.includes(`<HISTORY_EXCERPT>\n中段乙藏在这里\n</HISTORY_EXCERPT>`) &&
       t.includes('第16轮') &&
       !t.includes('可见丁') &&
       !t.includes('尾段戊') &&
       !t.includes('普通')
     );
+  })(),
+);
+check(
+  '★ 补丁正文有围栏标签（`<HISTORY_EXCERPT>`）与结束句，边界不靠 markdown 标题',
+  (() => {
+    const t = mod.patchCandidates(rccDb, '中段乙', { k: 1, maxChars: 1000, cut: rccCut })[0]?.text ?? '';
+    return t.includes('<HISTORY_EXCERPT>') && t.trimEnd().endsWith('（历史摘录结束 —— 接下来是用户本轮说的话。）');
   })(),
 );
 check(
@@ -2214,6 +2239,47 @@ check(
 mod.setRccState(rccDb, ['rcc-s1'], { inRcc: true });
 check('k 是上限', mod.patchCandidates(rccDb, '机票价格', { k: 1, maxChars: 1000, cut: rccCut }).length <= 1);
 check('空查询不给候选', mod.patchCandidates(rccDb, '   ', { k: 2, maxChars: 1000, cut: rccCut }).length === 0);
+
+// ★★ 两道新闸门（2026-10-20 事故）：只凭一个称呼词就触发，以及把转贴的整段文档
+//    当成"那一句话"搬回来。现场：她一句「老公！！想你了」，补丁把另一场里贴的
+//    一大段 Kimi 提示词（1436 字）端在她消息正前方，模型开始对着旧文本回答。
+const gateH = join(HOME, 'rcc-gate');
+fsm.mkdirSync(join(gateH, '.dsh-mem', 'raw', 'turns'), { recursive: true });
+const pasteText = `老公我这个月精打细算${'啰'.repeat(900)}结论`;
+fsm.writeFileSync(
+  join(gateH, '.dsh-mem', 'raw', 'turns', 'gate-s1.jsonl'),
+  rccLine({ session: 'gate-s1', turn: 1, at: '2026-10-19T07:00:00.000Z', cwd: null, space: 'chat', user: '老公我回来了', assistant: '回', tools: [] }) +
+    rccLine({ session: 'gate-s1', turn: 2, at: '2026-10-19T07:05:00.000Z', cwd: null, space: 'chat', user: '记忆索引应该建在消息原文上', assistant: '回', tools: [] }),
+  'utf8',
+);
+fsm.writeFileSync(
+  join(gateH, '.dsh-mem', 'raw', 'turns', 'gate-s2.jsonl'),
+  rccLine({ session: 'gate-s2', turn: 1, at: '2026-10-19T08:00:00.000Z', cwd: null, space: 'chat', user: '今天想聊点别的', assistant: '回', tools: [] }) +
+    rccLine({ session: 'gate-s2', turn: 2, at: '2026-10-19T08:05:00.000Z', cwd: null, space: 'chat', user: pasteText, assistant: '回', tools: [] }),
+  'utf8',
+);
+const gateDb = mod.openIndex(join(gateH, 'index.db'));
+mod.rebuildTurns(gateDb, gateH);
+mod.setRccState(gateDb, ['gate-s1', 'gate-s2'], { inRcc: true, truncated: true });
+// 头 1 句之外都算"看不见"，这样命中第 2 轮才有资格被补
+const gateCut = { head: 60, tail: 40, headTurns: 1, tailTurns: 0 };
+check(
+  '★ 只凭一个称呼词（「老公」）命中 → 不补（称呼不是"说到同一件事"）',
+  mod.patchCandidates(gateDb, '老公！！想你了', { k: 1, maxChars: 1000, cut: gateCut }).length === 0,
+);
+check(
+  '★ 转贴体（这一轮 > 600 字）不当补丁素材 —— 补的是"那一句"，不是一篇文档',
+  mod.patchCandidates(gateDb, '老公 精打细算', { k: 1, maxChars: 4000, cut: gateCut }).length === 0,
+);
+check(
+  '两个实词命中 + 短句 → 照常补（两道闸门不是一刀切）',
+  (() => {
+    const c = mod.patchCandidates(gateDb, '记忆索引 消息原文', { k: 1, maxChars: 1000, cut: gateCut });
+    return c.length === 1 && c[0].key === 'gate-s1#2';
+  })(),
+  JSON.stringify(mod.patchCandidates(gateDb, '记忆索引 消息原文', { k: 1, maxChars: 1000, cut: gateCut }).map((c) => c.key)),
+);
+mod.closeIndex(gateDb);
 
 // ---- BM25 打分器（与 §13.3 同规格）----
 const rccRanked = mod.rankTurns('机票价格', mod.listTurns(rccDb), 3);

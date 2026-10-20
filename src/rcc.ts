@@ -166,6 +166,17 @@ export const DEFAULT_CUT: CutOptions = {
 export const NO_CUT: CutOptions = { head: 0, tail: 0, headTurns: 0, tailTurns: 0 };
 
 /**
+ * 一轮超过这个字数就当"长文"处理：RCC 里只留一行标记，**不原样带进去**。
+ *
+ * 2026-10-20 现场：她贴了一篇 1340 字的 Kimi 提示词（还带着 `<DREAM_...>` 标签），
+ * 之后每个新会话的 RCC 里都会带上它的开头 60 字 + `[TL;DR]` + 结尾 40 字 ——
+ * 40 场窗口内"次次带上"，既贵，又让模型把一段提示词残片当成她说过的话。
+ *
+ * 它跟补丁的素材上限是**同一个数**：超过它，RCC 不原样收录，补丁也不整段搬回来。
+ */
+export const RCC_LONG_TURN_CHARS = 600;
+
+/**
  * 取一场的用户发言（逐字，`||||` 分隔）。**只用 `userText`** —— §5.8 的硬约束。
  *
  * **两层裁剪**：
@@ -193,6 +204,14 @@ export function sessionUserText(
   const parts: string[] = [];
   let cutCount = 0;
   const pushLine = (line: string): void => {
+    // 长文（转贴提示词、代码、日志）：只留一行标记 —— 原样带进去会占 40 场窗口的预算，
+    // 而且残片读起来像"她说过的话"。标记里保住"开头 40 字"，够认出是哪一篇。
+    if (line.length > RCC_LONG_TURN_CHARS) {
+      const snip = line.replace(/\s+/g, ' ').slice(0, 40);
+      parts.push(`[长文 ${line.length} 字 · 开头：${snip}${line.length > 40 ? '…' : ''}]`);
+      cutCount++;
+      return;
+    }
     const r = cutMiddle(line, cut.head, cut.tail);
     if (r.truncated) cutCount++;
     parts.push(r.text);
@@ -412,8 +431,10 @@ export function renderPatch(label: string, body: string): string {
   return [
     `### 历史原文补全 · ${label}`,
     `上面 RCC 里这一轮被 ${RCC_TRUNCATED} 裁掉了，以下是它**完整的**原话（同样是过往对话，不是本轮）：`,
-    '',
+    '<HISTORY_EXCERPT>',
     body,
+    '</HISTORY_EXCERPT>',
+    '（历史摘录结束 —— 接下来是用户本轮说的话。）',
   ].join('\n');
 }
 
@@ -431,6 +452,23 @@ export function renderPatch(label: string, body: string): string {
  */
 export const PATCH_GENERIC_DF_RATIO = 0.1;
 export const PATCH_GENERIC_MIN_DF = 3;
+
+/**
+ * 补丁要**至少命中两个**有辨识度的词，才算"真的在说同一件事"。
+ *
+ * 2026-10-20 事故：她一句「老公！！想你了」只凭「老公」一个词，就把另一场会话里
+ * 转贴的一大段 Kimi 提示词当成"历史原文补全"，1436 字端在她那句话正前方 ——
+ * 模型分不清，开始对着那堆旧文本回答。
+ */
+export const PATCH_MIN_MATCHES = 2;
+
+/**
+ * 补丁素材的长度上限（字符）—— 与 {@link RCC_LONG_TURN_CHARS} 同一个数。
+ *
+ * 补丁的意义是"把被 `[TL;DR]` 裁掉的那**一句**说全"，不是把一篇转贴的文档搬回来。
+ * 超过这个长度的"轮次"（贴提示词、贴代码、贴日志）一律不当候选。
+ */
+export const PATCH_MAX_TURN_CHARS = RCC_LONG_TURN_CHARS;
 
 /**
  * 这次查询里**有辨识度的词**（= 不是泛词）。
@@ -534,9 +572,11 @@ export function patchCandidates(
   for (const hit of rankTurns(query, turns, opts.k * 8)) {
     const sid = hit.turn.session;
     const line = hit.turn.userText.trim();
-    // 闸门 ①：这一轮得含有辨识度的词 —— 否则它是靠"记忆"这类泛词上榜的
+    // 闸门 ①b：一个词不够 —— 称呼/口头语（"老公""宝宝"）单独命中不算"说到同一件事"
     const tokens = new Set(tokenize(line));
-    if (!distinctive.some((t) => tokens.has(t))) continue;
+    if (distinctive.filter((t) => tokens.has(t)).length < PATCH_MIN_MATCHES) continue;
+    // 闸门 ①c：转贴体（提示词、代码、日志）不补 —— 补的是"那一句"，不是一篇文档
+    if (line.length > PATCH_MAX_TURN_CHARS) continue;
     // 闸门 ②：只补"被砍掉的原话" —— 看得见的那部分已经完整在上下文里了
     if (isVisibleInRcc(bySession.get(sid) ?? [], hit.turn, opts.cut)) continue;
     const key = `${sid}#${hit.turn.turn}`;
